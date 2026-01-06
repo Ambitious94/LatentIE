@@ -1,0 +1,9 @@
+transformers
+torch
+numpy
+tqdm
+accelerate
+datasets
+Pillow
+qwen-vl-utils
+torchvision
