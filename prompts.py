@@ -785,7 +785,7 @@ def build_extraction_prompts_sequential(dataset: str, role: str, question: str, 
     """
     import json
     
-    system_message = "You are Qwen, created by Alibaba Cloud. You are a document information extraction specialist."
+    system_message = "You are Qwen, created by Alibaba Cloud. You are a document information extraction specialist. When asked to extract, output ONLY valid JSON without any thinking process or explanatory text."
     
     assert method in ["latent_mas"], "this prompt only for latent_mas method"
     assert "qwen" in args.model_name.lower(), "this prompt only for qwen models"
@@ -916,6 +916,8 @@ Entities in document (use these exact names):
         
         user_prompt = f"""You are the Final Extraction Agent.
 
+IMPORTANT: Output ONLY the JSON object. Do NOT output any thinking process, explanations, or text outside the JSON.
+
 Task: {task_desc}
 
 {docred_entity_section}Document:
@@ -948,7 +950,7 @@ def build_extraction_prompts_hierarchical(dataset: str, role: str, question: str
     """
     import json
     
-    system_message = "You are Qwen, created by Alibaba Cloud. You are a document information extraction specialist."
+    system_message = "You are Qwen, created by Alibaba Cloud. You are a document information extraction specialist. When asked to extract, output ONLY valid JSON without any thinking process or explanatory text."
     
     assert method in ["latent_mas"], "this prompt only for latent_mas method"
     assert "qwen" in args.model_name.lower(), "this prompt only for qwen models"
@@ -1069,6 +1071,8 @@ Output rules:
         
         user_prompt = f"""You are the Final Synthesizer.
 
+IMPORTANT: Output ONLY the JSON object. Do NOT output any thinking process, explanations, or text outside the JSON.
+
 Task: {task_desc}
 
 Full Document Content:
@@ -1080,14 +1084,11 @@ Target Extraction Schema:
 {template_str}
 {docred_instructions}
 Instructions:
-1. Merge information from all partitions
+1. Merge information from all partitions - choose CORRECT relation IDs
 2. Remove duplicate entries
-3. Fill all schema fields with extracted information
-4. For arrays, include ALL unique instances
-5. For missing fields, use "" or []
-6. Output ONLY valid JSON matching the schema
-7. No extra text outside JSON
-8. For DocRED: Use EXACT entity names from the list
+3. Use EXACT entity names - no typos
+4. Format: {{"head": "Name", "relation": "P123", "tail": "Name", "evidence": [0]}}
+5. Output ONLY valid JSON - no thinking, no extra text
 
 Final extraction (JSON only):
 """
@@ -1155,7 +1156,7 @@ def build_extraction_prompts_text_mas_sequential(dataset: str, role: str, questi
     """
     import json
     
-    system_message = "You are Qwen, created by Alibaba Cloud. You are a document information extraction specialist."
+    system_message = "You are Qwen, created by Alibaba Cloud. You are a document information extraction specialist. When asked to extract, output ONLY valid JSON without any thinking process or explanatory text."
     
     assert method in ["text_mas"], "this prompt only for text_mas method"
     
@@ -1260,6 +1261,8 @@ Named Entities (use EXACT names):
         
         user_prompt = f"""You are the Final Extraction Agent.
 
+IMPORTANT: Output ONLY the JSON object. Do NOT output any thinking process, explanations, or text outside the JSON.
+
 Task: {task_desc}
 {docred_entity_section}
 Document: {question}
@@ -1304,7 +1307,7 @@ def build_extraction_prompts_text_mas_hierarchical(dataset: str, role: str, ques
     """
     import json
     
-    system_message = "You are Qwen, created by Alibaba Cloud. You are a document information extraction specialist."
+    system_message = "You are Qwen, created by Alibaba Cloud. You are a document information extraction specialist. When asked to extract, output ONLY valid JSON without any thinking process or explanatory text."
     
     assert method in ["text_mas"], "this prompt only for text_mas method"
     
@@ -1413,6 +1416,8 @@ Named Entities (use EXACT names):
 """
         
         user_prompt = f"""You are the Final Extraction Agent.
+
+IMPORTANT: Output ONLY the JSON object. Do NOT output any thinking process, explanations, or text outside the JSON.
 
 Task: {task_desc}
 {docred_entity_section}
