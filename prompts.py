@@ -1024,23 +1024,27 @@ def build_extraction_prompts_hierarchical(dataset: str, role: str, question: str
     if dataset == "docred":
         task_desc = "document-level relation extraction using Wikidata property IDs"
         focus_areas = "named entities and their relationships using Wikidata IDs"
-        docred_hint = f"\n\n{DOCRED_RELATIONS_COMPACT}"
+        output_constraint = DOCRED_RELATIONS_FULL
     
     elif dataset == "cord":
         task_desc = "receipt/invoice extraction"
         focus_areas = "menu items, prices, totals, tax"
+        output_constraint = "Fill the 'menu' array with all items, and populate subtotal/total/tax fields with exact numeric values."
     
     elif dataset == "funsd":
         task_desc = "form understanding"
         focus_areas = "form fields, questions, answers, relationships"
+        output_constraint = "Fill 'entities' array with all text elements and their labels, 'relations' array with question-answer pairs."
     
     elif dataset == "finer":
         task_desc = "financial entity recognition"
         focus_areas = "financial domain entities and terms"
+        output_constraint = "Fill 'entities' array with all financial entities, their types, and positions in text."
     
     else:
         task_desc = "document extraction"
         focus_areas = "key information"
+        output_constraint = "Fill all schema fields with extracted information."
     
     if role == "planner":
         user_prompt = f"""You are Document Partition Reader 1.
