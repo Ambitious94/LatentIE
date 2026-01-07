@@ -798,14 +798,16 @@ def build_extraction_prompts_sequential(dataset: str, role: str, question: str, 
     if dataset == "docred":
         task_desc = "document-level relation extraction using Wikidata property IDs."
         focus_areas = "named entities (persons, organizations, locations, dates, etc.) and their relationships"
-        output_constraint = f"""CRITICAL: The 'relation' field MUST be a Wikidata property ID (e.g., P17, P569).
-The 'evidence' field is a list of sentence indices (0-indexed) that support the relation.
-{DOCRED_RELATIONS_COMPACT}
+        output_constraint = f"""Common relations (MUST use these IDs):
+P17:country, P131:located_in, P150:contains, P36:capital, P571:inception
+P569:birth_date, P570:death_date, P19:birthplace, P27:citizenship
+P112:founded_by, P159:headquarters, P276:location
 
-Examples of correct output format:
-- {{"head": "Barack Obama", "relation": "P19", "tail": "Honolulu", "evidence": [0, 1]}} (place of birth, supported by sentences 0 and 1)
-- {{"head": "Paris", "relation": "P17", "tail": "France", "evidence": [2]}} (country, supported by sentence 2)
-- {{"head": "John", "relation": "P569", "tail": "1990", "evidence": [0]}} (date of birth)"""
+All valid IDs: P6,P17,P19,P20,P22,P25,P26,P27,P30,P31,P35,P36,P37,P39,P40,P50,P54,P57,P58,P69,P86,P102,P108,P112,P118,P123,P127,P131,P136,P137,P140,P150,P155,P156,P159,P161,P162,P166,P170,P171,P172,P175,P176,P178,P179,P190,P194,P205,P206,P241,P264,P272,P276,P279,P355,P361,P364,P400,P403,P449,P463,P488,P495,P527,P551,P569,P570,P571,P576,P577,P580,P582,P585,P607,P674,P676,P706,P710,P737,P740,P749,P800,P807,P840,P937,P1001,P1056,P1198,P1336,P1344,P1365,P1366,P1376,P1412,P1441,P3373
+
+Examples:
+{{"head": "Paris", "relation": "P17", "tail": "France", "evidence": [0]}}
+{{"head": "Club", "relation": "P571", "tail": "1914", "evidence": [1]}}"""
     
     elif dataset == "cord":
         task_desc = "receipt/invoice information extraction. Extract structured purchase information."
@@ -891,7 +893,7 @@ Continue organization:
         docred_entity_section = ""
         if dataset == "docred" and entity_list:
             docred_entity_section = f"""
-Named Entities in Document (use EXACT names from this list):
+Entities in document (use these exact names):
 {entity_list}
 """
         
@@ -899,25 +901,21 @@ Named Entities in Document (use EXACT names from this list):
 
 Task: {task_desc}
 
-Document Content:
+{docred_entity_section}Document:
 {question}
-{docred_entity_section}
-You have latent information from previous agents analyzing this document.
 
-Target Extraction Schema:
+Schema:
 {template_str}
 
-Instructions:
-1. {output_constraint}
-2. For arrays, include ALL found instances (not just one example)
-3. For missing fields, use empty string "" or empty array []
-4. Maintain exact schema structure and field names
-5. Output ONLY valid JSON matching the schema
-6. Do NOT add any explanatory text outside JSON
-7. Ensure all numeric values are strings if they include currency symbols
-8. For DocRED: Use EXACT entity names from the entity list above
+{output_constraint}
 
-Extract now (JSON only):
+Output rules:
+- Use ONLY valid Wikidata property IDs from the list above (e.g., P17, P131, P571)
+- Use EXACT entity names from the entity list
+- evidence: list of sentence numbers [0, 1, 2, ...]
+- Output valid JSON only, no extra text
+
+Extract:
 """
     
     return [

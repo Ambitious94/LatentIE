@@ -775,10 +775,29 @@ def load_finer(
                     tag2id = json.load(f)
                     id2tag = {v: k for k, v in tag2id.items()}
             else:
-                raise FileNotFoundError(
-                    f"IOB2 format detected but tag2id.json not found. "
-                    f"Please provide tag2id_path or place tag2id.json in {base_dir}"
-                )
+                # Auto-generate id2tag from data if not found
+                print(f"⚠️  tag2id.json not found, auto-generating from data...")
+                all_tag_ids = set()
+                for doc in data:
+                    if "ner_tags" in doc:
+                        all_tag_ids.update(doc["ner_tags"])
+                
+                # Create a default mapping (0 -> O, others -> ENTITY-{id})
+                id2tag = {0: "O"}
+                for tag_id in sorted(all_tag_ids):
+                    if tag_id != 0 and tag_id not in id2tag:
+                        id2tag[tag_id] = f"ENTITY-{tag_id}"
+                
+                print(f"✓ Auto-generated {len(id2tag)} tag mappings: {id2tag}")
+                
+                # Optionally save the mapping for future use
+                try:
+                    with open(default_tag2id, 'w', encoding='utf-8') as f:
+                        tag2id_auto = {v: k for k, v in id2tag.items()}
+                        json.dump(tag2id_auto, f, indent=2, ensure_ascii=False)
+                    print(f"✓ Saved auto-generated mapping to {default_tag2id}")
+                except:
+                    pass
     
     # Standard FinER extraction schema
     extract_template = {
