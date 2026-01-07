@@ -798,16 +798,33 @@ def build_extraction_prompts_sequential(dataset: str, role: str, question: str, 
     if dataset == "docred":
         task_desc = "document-level relation extraction using Wikidata property IDs."
         focus_areas = "named entities (persons, organizations, locations, dates, etc.) and their relationships"
-        output_constraint = f"""Common relations (MUST use these IDs):
-P17:country, P131:located_in, P150:contains, P36:capital, P571:inception
-P569:birth_date, P570:death_date, P19:birthplace, P27:citizenship
-P112:founded_by, P159:headquarters, P276:location
+        output_constraint = f"""CRITICAL: Choose the CORRECT relation ID for each relationship:
 
-All valid IDs: P6,P17,P19,P20,P22,P25,P26,P27,P30,P31,P35,P36,P37,P39,P40,P50,P54,P57,P58,P69,P86,P102,P108,P112,P118,P123,P127,P131,P136,P137,P140,P150,P155,P156,P159,P161,P162,P166,P170,P171,P172,P175,P176,P178,P179,P190,P194,P205,P206,P241,P264,P272,P276,P279,P355,P361,P364,P400,P403,P449,P463,P488,P495,P527,P551,P569,P570,P571,P576,P577,P580,P582,P585,P607,P674,P676,P706,P710,P737,P740,P749,P800,P807,P840,P937,P1001,P1056,P1198,P1336,P1344,P1365,P1366,P1376,P1412,P1441,P3373
+Organization relations:
+- P749: parent_organization (Company A → Company B means A is part of B)
+- P355: subsidiary (Company B → Company A means A is subsidiary of B)
+- P361: part_of (Department → Company)
+- P108: employer (Person → Company where they work)
+- P112: founder (Person who founded → Organization)
 
-Examples:
-{{"head": "Paris", "relation": "P17", "tail": "France", "evidence": [0]}}
-{{"head": "Club", "relation": "P571", "tail": "1914", "evidence": [1]}}"""
+Location relations:
+- P17: country (City/Organization → Country)
+- P131: located_in (City/Building → Administrative area)
+- P159: headquarters (Organization → City where HQ is located)
+- P30: continent (Country/Region → Continent)
+
+Time relations:
+- P571: inception/founded (Organization → Date when established)
+- P569: birth_date (Person → Birth date)
+- P580: start_time (Event → Start date)
+
+Examples with correct IDs:
+{{"head": "Apple Inc.", "relation": "P749", "tail": "Apple Computer Company", "evidence": [0]}}
+{{"head": "Steve Jobs", "relation": "P108", "tail": "Apple Inc.", "evidence": [1]}}
+{{"head": "Cupertino", "relation": "P17", "tail": "United States", "evidence": [0]}}
+{{"head": "IBM Research Brazil", "relation": "P571", "tail": "June 2010", "evidence": [2]}}
+
+All valid IDs: P6,P17,P19,P20,P22,P25,P26,P27,P30,P31,P35,P36,P37,P39,P40,P50,P54,P57,P58,P69,P86,P102,P108,P112,P118,P123,P127,P131,P136,P137,P140,P150,P155,P156,P159,P161,P162,P166,P170,P171,P172,P175,P176,P178,P179,P190,P194,P205,P206,P241,P264,P272,P276,P279,P355,P361,P364,P400,P403,P449,P463,P488,P495,P527,P551,P569,P570,P571,P576,P577,P580,P582,P585,P607,P674,P676,P706,P710,P737,P740,P749,P800,P807,P840,P937,P1001,P1056,P1198,P1336,P1344,P1365,P1366,P1376,P1412,P1441,P3373"""
     
     elif dataset == "cord":
         task_desc = "receipt/invoice information extraction. Extract structured purchase information."
@@ -910,10 +927,11 @@ Schema:
 {output_constraint}
 
 Output rules:
-- Use ONLY valid Wikidata property IDs from the list above (e.g., P17, P131, P571)
-- Use EXACT entity names from the entity list
-- evidence: list of sentence numbers [0, 1, 2, ...]
-- Output valid JSON only, no extra text
+1. Choose the CORRECT relation ID based on the relationship type (see categories above)
+2. Use EXACT entity names from entity list - no typos, no spaces added/removed
+3. Format: {{"head": "Entity Name", "relation": "P123", "tail": "Entity Name", "evidence": [0, 1]}}
+4. evidence: sentence numbers starting from 0
+5. Output ONLY valid JSON - no thinking process, no extra text
 
 Extract:
 """
@@ -1029,13 +1047,24 @@ Named Entities (use EXACT names from this list):
 {entity_list}
 """
             docred_instructions = f"""
-CRITICAL for DocRED: The 'relation' field MUST be a Wikidata property ID (e.g., P17, P569).
-The 'evidence' field is a list of sentence indices (0-indexed) that support the relation.
-{DOCRED_RELATIONS_COMPACT}
-{entity_section}
+CRITICAL: Choose the CORRECT relation ID for each relationship:
+
+Organization: P749:parent_org, P355:subsidiary, P361:part_of, P108:employer, P112:founder
+Location: P17:country, P131:located_in, P159:headquarters, P30:continent
+Time: P571:inception, P569:birth_date, P580:start_time
+
 Examples:
-- {{"head": "Barack Obama", "relation": "P19", "tail": "Honolulu", "evidence": [0, 1]}} (place of birth)
-- {{"head": "Paris", "relation": "P17", "tail": "France", "evidence": [2]}} (country)
+{{"head": "Apple Inc.", "relation": "P749", "tail": "Apple Computer", "evidence": [0]}}
+{{"head": "Steve Jobs", "relation": "P108", "tail": "Apple Inc.", "evidence": [1]}}
+{{"head": "Cupertino", "relation": "P17", "tail": "United States", "evidence": [0]}}
+
+{entity_section}
+Output rules:
+1. Choose CORRECT relation ID (see categories above)
+2. Use EXACT entity names - no typos
+3. Format: {{"head": "Name", "relation": "P123", "tail": "Name", "evidence": [0]}}
+4. evidence: sentence numbers from 0
+5. No thinking process, output JSON only
 """
         
         user_prompt = f"""You are the Final Synthesizer.
@@ -1232,25 +1261,24 @@ Named Entities (use EXACT names):
         user_prompt = f"""You are the Final Extraction Agent.
 
 Task: {task_desc}
-
-Document Content:
-{question}
 {docred_entity_section}
-Target Schema:
-{template_str}
+Document: {question}
 
-Previous Agents' Complete Analysis:
+Schema: {template_str}
+
+{output_constraint}
+
+Output rules:
+1. Choose CORRECT relation ID based on relationship type
+2. Use EXACT entity names - no typos or extra spaces
+3. Format: {{"head": "Entity Name", "relation": "P123", "tail": "Entity Name", "evidence": [0, 1]}}
+4. evidence: sentence numbers starting from 0
+5. Output ONLY valid JSON - no thinking, no extra text
+
+Previous agents' analysis:
 {context}
 
-Instructions:
-1. {output_constraint}
-2. Include ALL found instances in arrays
-3. Use "" or [] for missing fields
-4. Output ONLY valid JSON matching the schema
-5. No explanatory text outside JSON
-6. For DocRED: Use EXACT entity names from the list
-
-Extract now (JSON only):
+Extract:
 """
     
     # Check if item has image (multimodal)
@@ -1387,25 +1415,24 @@ Named Entities (use EXACT names):
         user_prompt = f"""You are the Final Extraction Agent.
 
 Task: {task_desc}
-
-Full Document Content:
-{question}
 {docred_entity_section}
-Target Schema:
-{template_str}
+Document: {question}
 
-All Partition Findings:
+Schema: {template_str}
+
+{output_constraint}
+
+Output rules:
+1. Merge partition findings - choose CORRECT relation ID for each
+2. Use EXACT entity names - no typos
+3. Format: {{"head": "Name", "relation": "P123", "tail": "Name", "evidence": [0]}}
+4. Remove duplicates
+5. Output ONLY valid JSON - no thinking, no extra text
+
+Partition findings:
 {context}
 
-Instructions:
-1. Merge all partition findings into final output
-2. {output_constraint}
-3. Remove duplicates, keep unique instances
-4. Use "" or [] for missing fields
-5. Output ONLY valid JSON
-6. For DocRED: Use EXACT entity names from the list
-
-Final extraction (JSON only):
+Extract:
 """
     
     # Check if item has image (multimodal)
