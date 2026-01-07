@@ -977,25 +977,26 @@ Entities (use ONLY these):
 {entity_list}
 """
         
-        user_prompt = f"""Final Extraction Agent.
-
-Task: {task_desc}
+        user_prompt = f"""Task: {task_desc}
 
 {docred_entity_section}Document:
 {question}
 
 {output_constraint}
 
-Output format: {{"relations": [{{"head": "...", "relation": "P17", "tail": "...", "evidence": [0]}}]}}
+Instructions:
+1. First, analyze the document and reason about relationships (write your thinking)
+2. Then output FINAL JSON starting with: {{"relations": [...]}}
+
+Format example:
+{{"relations": [{{"head": "IBM Research – Brazil", "relation": "P749", "tail": "IBM Research", "evidence": [0]}}]}}
 
 Rules:
-1. Start with {{ immediately
-2. Use ONLY entities from list [0]-[15]
-3. Choose correct relation ID from list above
-4. NO <think> or other tags
-5. evidence: sentence indices from 0
+- Use entities [0]-[15] only
+- Choose correct P-ID from relation list above
+- evidence: sentence indices from 0
 
-Output JSON:
+Begin your analysis:
 """
     
     return [
@@ -1105,25 +1106,26 @@ Entities (use ONLY these):
 {entity_list}
 """
         
-        user_prompt = f"""Final Extraction Agent.
-
-Task: {task_desc}
+        user_prompt = f"""Task: {task_desc}
 
 {docred_entity_section}Document:
 {question}
 
 {output_constraint}
 
-Output format: {{"relations": [{{"head": "...", "relation": "P17", "tail": "...", "evidence": [0]}}]}}
+Instructions:
+1. First, analyze the document and reason about relationships (write your thinking)
+2. Then output FINAL JSON starting with: {{"relations": [...]}}
+
+Format example:
+{{"relations": [{{"head": "IBM Research – Brazil", "relation": "P749", "tail": "IBM Research", "evidence": [0]}}]}}
 
 Rules:
-1. Start with {{ immediately
-2. Use ONLY entities from list [0]-[15]
-3. Choose correct relation ID from list above
-4. NO <think> or other tags
-5. evidence: sentence indices from 0
+- Use entities [0]-[15] only
+- Choose correct P-ID from relation list above
+- evidence: sentence indices from 0
 
-You have latent info from all partitions. Output JSON:
+You have latent info from all partitions. Begin your analysis:
 """
     
     # Check if item has image (multimodal)
@@ -1292,28 +1294,29 @@ Entities (use ONLY these):
 {entity_list}
 """
         
-        user_prompt = f"""Final Extraction Agent.
-
-Task: {task_desc}
+        user_prompt = f"""Task: {task_desc}
 
 {docred_entity_section}Document:
 {question}
 
 {output_constraint}
 
-Output format: {{"relations": [{{"head": "...", "relation": "P17", "tail": "...", "evidence": [0]}}]}}
+Instructions:
+1. First, analyze the document and reason about relationships (write your thinking)
+2. Then output FINAL JSON starting with: {{"relations": [...]}}
+
+Format example:
+{{"relations": [{{"head": "IBM Research – Brazil", "relation": "P749", "tail": "IBM Research", "evidence": [0]}}]}}
 
 Rules:
-1. Start with {{ immediately
-2. Use ONLY entities from list [0]-[15]
-3. Choose correct relation ID from list above
-4. NO <think> or other tags
-5. evidence: sentence indices from 0
+- Use entities [0]-[15] only
+- Choose correct P-ID from relation list above
+- evidence: sentence indices from 0
 
 Previous agents found:
 {context}
 
-Output JSON:
+Begin your analysis:
 """
     
     # Check if item has image (multimodal)
@@ -1447,28 +1450,29 @@ Entities (use ONLY these):
 {entity_list}
 """
         
-        user_prompt = f"""Final Extraction Agent.
-
-Task: {task_desc}
+        user_prompt = f"""Task: {task_desc}
 
 {docred_entity_section}Document:
 {question}
 
 {output_constraint}
 
-Output format: {{"relations": [{{"head": "...", "relation": "P17", "tail": "...", "evidence": [0]}}]}}
+Instructions:
+1. First, analyze the document and reason about relationships (write your thinking)
+2. Then output FINAL JSON starting with: {{"relations": [...]}}
+
+Format example:
+{{"relations": [{{"head": "IBM Research – Brazil", "relation": "P749", "tail": "IBM Research", "evidence": [0]}}]}}
 
 Rules:
-1. Start with {{ immediately
-2. Use ONLY entities from list [0]-[15]
-3. Choose correct relation ID from list above
-4. NO <think> or other tags
-5. evidence: sentence indices from 0
+- Use entities [0]-[15] only
+- Choose correct P-ID from relation list above
+- evidence: sentence indices from 0
 
 Partition findings:
 {context}
 
-Output JSON:
+Begin your analysis:
 """
     
     # Check if item has image (multimodal)
