@@ -871,7 +871,10 @@ Continue organization:
 
 Task: {task_desc}
 
-You have received comprehensive latent information from all document sections.
+Document Content:
+{question}
+
+You have latent information from previous agents analyzing this document.
 
 Target Extraction Schema:
 {template_str}
@@ -989,7 +992,10 @@ Partition 3 extraction:
 
 Task: {task_desc}
 
-You have received latent information from all document partitions.
+Full Document Content:
+{question}
+
+You have latent information from all document partitions analyzing this content.
 
 Target Extraction Schema:
 {template_str}
@@ -1161,6 +1167,9 @@ Output the organized, complete list of extracted information.
 
 Task: {task_desc}
 
+Document Content:
+{question}
+
 Target Schema:
 {template_str}
 
@@ -1296,6 +1305,9 @@ Merged findings:
         user_prompt = f"""You are the Final Extraction Agent.
 
 Task: {task_desc}
+
+Full Document Content:
+{question}
 
 Target Schema:
 {template_str}
