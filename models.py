@@ -27,6 +27,8 @@ def _ensure_pad_token(tokenizer: AutoTokenizer) -> None:
             tokenizer.pad_token = tokenizer.eos_token
         else:
             tokenizer.add_special_tokens({"pad_token": "<pad>"})
+    # Set padding_side to 'left' for decoder-only models (required for correct generation)
+    tokenizer.padding_side = 'left'
 
 
 def _past_length(past_key_values: Optional[Tuple]) -> int:
