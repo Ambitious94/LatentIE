@@ -767,17 +767,105 @@ Present your reasoning, and then clearly state your final answer at the end.
 
 # ============= Document Extraction Dataset Prompts =============
 
-# DocRED relation types (Wikidata property IDs) - Compact version
-DOCRED_RELATIONS_COMPACT = """Key relation types (Wikidata IDs):
-Geographic: P17(country), P131(located in), P150(contains), P36(capital), P1376(capital of), P276(location)
-People: P19(birthplace), P20(death place), P27(citizenship), P569(birth date), P570(death date), P172(ethnic group)
-Organization: P159(headquarters), P112(founded by), P127(owned by), P137(operator), P488(chairperson)
-Family: P22(father), P25(mother), P26(spouse), P40(child), P3373(sibling)
-Position: P6(head of gov), P35(head of state), P39(position held), P108(employer)
-Creative: P50(author), P57(director), P58(screenwriter), P86(composer), P170(creator), P175(performer)
-Language: P37(official language), P1412(languages spoken)
-Other: P31(instance of), P279(subclass of), P361(part of), P527(has part)
-Full list: P6,P17,P19,P20,P22,P25,P26,P27,P30,P31,P35,P36,P37,P39,P40,P50,P54,P57,P58,P69,P86,P102,P108,P112,P118,P123,P127,P131,P136,P137,P140,P150,P155,P156,P159,P161,P162,P166,P170,P171,P172,P175,P176,P178,P179,P190,P194,P205,P206,P241,P264,P272,P276,P279,P355,P361,P364,P400,P403,P449,P463,P488,P495,P527,P551,P569,P570,P571,P576,P577,P580,P582,P585,P607,P674,P676,P706,P710,P737,P740,P749,P800,P807,P840,P937,P1001,P1056,P1198,P1336,P1344,P1365,P1366,P1376,P1412,P1441,P3373"""
+# DocRED relation definitions (all 96 Wikidata properties)
+DOCRED_RELATIONS_FULL = """ALL VALID RELATIONS (use these IDs):
+
+- P6: head of government
+- P17: country
+- P19: place of birth
+- P20: place of death
+- P22: father
+- P25: mother
+- P26: spouse
+- P27: country of citizenship
+- P30: continent
+- P31: instance of
+- P35: head of state
+- P36: capital
+- P37: official language
+- P39: position held
+- P40: child
+- P50: author
+- P54: member of sports team
+- P57: director
+- P58: screenwriter
+- P69: educated at
+- P86: composer
+- P102: member of political party
+- P108: employer
+- P112: founded by
+- P118: league
+- P123: publisher
+- P127: owned by
+- P131: located in the administrative territorial entity
+- P136: genre
+- P137: operator
+- P140: religion
+- P150: contains administrative territorial entity
+- P155: follows
+- P156: followed by
+- P159: headquarters location
+- P161: cast member
+- P162: producer
+- P166: award received
+- P170: creator
+- P171: parent taxon
+- P172: ethnic group
+- P175: performer
+- P176: manufacturer
+- P178: developer
+- P179: series
+- P190: sister city
+- P194: legislative body
+- P205: basin country
+- P206: located in or next to body of water
+- P241: military branch
+- P264: record label
+- P272: production company
+- P276: location
+- P279: subclass of
+- P355: subsidiary
+- P361: part of
+- P364: original language of work
+- P400: platform
+- P403: mouth of the watercourse
+- P449: original network
+- P463: member of
+- P488: chairperson
+- P495: country of origin
+- P527: has part
+- P551: residence
+- P569: date of birth
+- P570: date of death
+- P571: inception
+- P576: dissolved, abolished or demolished
+- P577: publication date
+- P580: start time
+- P582: end time
+- P585: point in time
+- P607: conflict
+- P674: characters
+- P676: lyrics by
+- P706: located on terrain feature
+- P710: participant
+- P737: influenced by
+- P740: location of formation
+- P749: parent organization
+- P800: notable work
+- P807: separated from
+- P840: narrative location
+- P937: work location
+- P1001: applies to jurisdiction
+- P1056: product or material produced
+- P1198: unemployment rate
+- P1336: territory claimed by
+- P1344: participant of
+- P1365: replaces
+- P1366: replaced by
+- P1376: capital of
+- P1412: languages spoken, written or signed
+- P1441: present in work
+- P3373: sibling"""
 
 def build_extraction_prompts_sequential(dataset: str, role: str, question: str, item: dict, method=None, args=None):
     """
@@ -798,33 +886,8 @@ def build_extraction_prompts_sequential(dataset: str, role: str, question: str, 
     if dataset == "docred":
         task_desc = "document-level relation extraction using Wikidata property IDs."
         focus_areas = "named entities (persons, organizations, locations, dates, etc.) and their relationships"
-        output_constraint = f"""CRITICAL: Choose the CORRECT relation ID for each relationship:
-
-Organization relations:
-- P749: parent_organization (Company A → Company B means A is part of B)
-- P355: subsidiary (Company B → Company A means A is subsidiary of B)
-- P361: part_of (Department → Company)
-- P108: employer (Person → Company where they work)
-- P112: founder (Person who founded → Organization)
-
-Location relations:
-- P17: country (City/Organization → Country)
-- P131: located_in (City/Building → Administrative area)
-- P159: headquarters (Organization → City where HQ is located)
-- P30: continent (Country/Region → Continent)
-
-Time relations:
-- P571: inception/founded (Organization → Date when established)
-- P569: birth_date (Person → Birth date)
-- P580: start_time (Event → Start date)
-
-Examples with correct IDs:
-{{"head": "Apple Inc.", "relation": "P749", "tail": "Apple Computer Company", "evidence": [0]}}
-{{"head": "Steve Jobs", "relation": "P108", "tail": "Apple Inc.", "evidence": [1]}}
-{{"head": "Cupertino", "relation": "P17", "tail": "United States", "evidence": [0]}}
-{{"head": "IBM Research Brazil", "relation": "P571", "tail": "June 2010", "evidence": [2]}}
-
-All valid IDs: P6,P17,P19,P20,P22,P25,P26,P27,P30,P31,P35,P36,P37,P39,P40,P50,P54,P57,P58,P69,P86,P102,P108,P112,P118,P123,P127,P131,P136,P137,P140,P150,P155,P156,P159,P161,P162,P166,P170,P171,P172,P175,P176,P178,P179,P190,P194,P205,P206,P241,P264,P272,P276,P279,P355,P361,P364,P400,P403,P449,P463,P488,P495,P527,P551,P569,P570,P571,P576,P577,P580,P582,P585,P607,P674,P676,P706,P710,P737,P740,P749,P800,P807,P840,P937,P1001,P1056,P1198,P1336,P1344,P1365,P1366,P1376,P1412,P1441,P3373"""
+        
+        output_constraint = DOCRED_RELATIONS_FULL
     
     elif dataset == "cord":
         task_desc = "receipt/invoice information extraction. Extract structured purchase information."
@@ -910,32 +973,29 @@ Continue organization:
         docred_entity_section = ""
         if dataset == "docred" and entity_list:
             docred_entity_section = f"""
-Entities in document (use these exact names):
+Entities (use ONLY these):
 {entity_list}
 """
         
-        user_prompt = f"""You are the Final Extraction Agent.
-
-IMPORTANT: Output ONLY the JSON object. Do NOT output any thinking process, explanations, or text outside the JSON.
+        user_prompt = f"""Final Extraction Agent.
 
 Task: {task_desc}
 
 {docred_entity_section}Document:
 {question}
 
-Schema:
-{template_str}
-
 {output_constraint}
 
-Output rules:
-1. Choose the CORRECT relation ID based on the relationship type (see categories above)
-2. Use EXACT entity names from entity list - no typos, no spaces added/removed
-3. Format: {{"head": "Entity Name", "relation": "P123", "tail": "Entity Name", "evidence": [0, 1]}}
-4. evidence: sentence numbers starting from 0
-5. Output ONLY valid JSON - no thinking process, no extra text
+Output format: {{"relations": [{{"head": "...", "relation": "P17", "tail": "...", "evidence": [0]}}]}}
 
-Extract:
+Rules:
+1. Start with {{ immediately
+2. Use ONLY entities from list [0]-[15]
+3. Choose correct relation ID from list above
+4. NO <think> or other tags
+5. evidence: sentence indices from 0
+
+Output JSON:
 """
     
     return [
@@ -1036,61 +1096,34 @@ Partition 3 extraction:
 """
     
     elif role == "judger":
-        # Build DocRED-specific instructions
-        docred_instructions = ""
         # Get entity list for DocRED
         entity_list = item.get("entity_list", "")
-        docred_instructions = ""
-        if dataset == "docred":
-            entity_section = ""
-            if entity_list:
-                entity_section = f"""
-Named Entities (use EXACT names from this list):
+        docred_entity_section = ""
+        if dataset == "docred" and entity_list:
+            docred_entity_section = f"""
+Entities (use ONLY these):
 {entity_list}
 """
-            docred_instructions = f"""
-CRITICAL: Choose the CORRECT relation ID for each relationship:
-
-Organization: P749:parent_org, P355:subsidiary, P361:part_of, P108:employer, P112:founder
-Location: P17:country, P131:located_in, P159:headquarters, P30:continent
-Time: P571:inception, P569:birth_date, P580:start_time
-
-Examples:
-{{"head": "Apple Inc.", "relation": "P749", "tail": "Apple Computer", "evidence": [0]}}
-{{"head": "Steve Jobs", "relation": "P108", "tail": "Apple Inc.", "evidence": [1]}}
-{{"head": "Cupertino", "relation": "P17", "tail": "United States", "evidence": [0]}}
-
-{entity_section}
-Output rules:
-1. Choose CORRECT relation ID (see categories above)
-2. Use EXACT entity names - no typos
-3. Format: {{"head": "Name", "relation": "P123", "tail": "Name", "evidence": [0]}}
-4. evidence: sentence numbers from 0
-5. No thinking process, output JSON only
-"""
         
-        user_prompt = f"""You are the Final Synthesizer.
-
-IMPORTANT: Output ONLY the JSON object. Do NOT output any thinking process, explanations, or text outside the JSON.
+        user_prompt = f"""Final Extraction Agent.
 
 Task: {task_desc}
 
-Full Document Content:
+{docred_entity_section}Document:
 {question}
 
-You have latent information from all document partitions analyzing this content.
+{output_constraint}
 
-Target Extraction Schema:
-{template_str}
-{docred_instructions}
-Instructions:
-1. Merge information from all partitions - choose CORRECT relation IDs
-2. Remove duplicate entries
-3. Use EXACT entity names - no typos
-4. Format: {{"head": "Name", "relation": "P123", "tail": "Name", "evidence": [0]}}
-5. Output ONLY valid JSON - no thinking, no extra text
+Output format: {{"relations": [{{"head": "...", "relation": "P17", "tail": "...", "evidence": [0]}}]}}
 
-Final extraction (JSON only):
+Rules:
+1. Start with {{ immediately
+2. Use ONLY entities from list [0]-[15]
+3. Choose correct relation ID from list above
+4. NO <think> or other tags
+5. evidence: sentence indices from 0
+
+You have latent info from all partitions. Output JSON:
 """
     
     # Check if item has image (multimodal)
@@ -1255,33 +1288,32 @@ Output the organized, complete list of extracted information.
         docred_entity_section = ""
         if dataset == "docred" and entity_list:
             docred_entity_section = f"""
-Named Entities (use EXACT names):
+Entities (use ONLY these):
 {entity_list}
 """
         
-        user_prompt = f"""You are the Final Extraction Agent.
-
-IMPORTANT: Output ONLY the JSON object. Do NOT output any thinking process, explanations, or text outside the JSON.
+        user_prompt = f"""Final Extraction Agent.
 
 Task: {task_desc}
-{docred_entity_section}
-Document: {question}
 
-Schema: {template_str}
+{docred_entity_section}Document:
+{question}
 
 {output_constraint}
 
-Output rules:
-1. Choose CORRECT relation ID based on relationship type
-2. Use EXACT entity names - no typos or extra spaces
-3. Format: {{"head": "Entity Name", "relation": "P123", "tail": "Entity Name", "evidence": [0, 1]}}
-4. evidence: sentence numbers starting from 0
-5. Output ONLY valid JSON - no thinking, no extra text
+Output format: {{"relations": [{{"head": "...", "relation": "P17", "tail": "...", "evidence": [0]}}]}}
 
-Previous agents' analysis:
+Rules:
+1. Start with {{ immediately
+2. Use ONLY entities from list [0]-[15]
+3. Choose correct relation ID from list above
+4. NO <think> or other tags
+5. evidence: sentence indices from 0
+
+Previous agents found:
 {context}
 
-Extract:
+Output JSON:
 """
     
     # Check if item has image (multimodal)
@@ -1411,33 +1443,32 @@ Merged findings:
         docred_entity_section = ""
         if dataset == "docred" and entity_list:
             docred_entity_section = f"""
-Named Entities (use EXACT names):
+Entities (use ONLY these):
 {entity_list}
 """
         
-        user_prompt = f"""You are the Final Extraction Agent.
-
-IMPORTANT: Output ONLY the JSON object. Do NOT output any thinking process, explanations, or text outside the JSON.
+        user_prompt = f"""Final Extraction Agent.
 
 Task: {task_desc}
-{docred_entity_section}
-Document: {question}
 
-Schema: {template_str}
+{docred_entity_section}Document:
+{question}
 
 {output_constraint}
 
-Output rules:
-1. Merge partition findings - choose CORRECT relation ID for each
-2. Use EXACT entity names - no typos
-3. Format: {{"head": "Name", "relation": "P123", "tail": "Name", "evidence": [0]}}
-4. Remove duplicates
-5. Output ONLY valid JSON - no thinking, no extra text
+Output format: {{"relations": [{{"head": "...", "relation": "P17", "tail": "...", "evidence": [0]}}]}}
+
+Rules:
+1. Start with {{ immediately
+2. Use ONLY entities from list [0]-[15]
+3. Choose correct relation ID from list above
+4. NO <think> or other tags
+5. evidence: sentence indices from 0
 
 Partition findings:
 {context}
 
-Extract:
+Output JSON:
 """
     
     # Check if item has image (multimodal)
