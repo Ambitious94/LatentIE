@@ -236,6 +236,8 @@ def load_docred(
     """
     Load DocRED dataset for document-level relation extraction.
     Format: {"relations": [{"head": "entity1", "relation": "relation_type", "tail": "entity2"}]}
+    
+    Gold labels are converted from index format {h:0, t:1, r:"P17"} to name format.
     """
     import json
     import os
@@ -249,7 +251,7 @@ def load_docred(
     # Standard DocRED extraction schema
     extract_template = {
         "relations": [
-            {"head": "", "relation": "", "tail": ""}
+            {"head": "", "relation": "", "tail": "", "evidence": []}
         ]
     }
     
@@ -260,16 +262,55 @@ def load_docred(
         else:
             full_text = str(doc.get("text", ""))
         
-        # Get gold labels if available
-        gold_relations = doc.get("labels", [])
+        # Get vertexSet for entity name lookup
+        vertex_set = doc.get("vertexSet", [])
+        
+        # Build entity index -> name mapping (use first mention's name)
+        def get_entity_name(idx):
+            if idx < len(vertex_set) and len(vertex_set[idx]) > 0:
+                return vertex_set[idx][0].get("name", f"Entity_{idx}")
+            return f"Entity_{idx}"
+        
+        # Get gold labels and convert to name format
+        gold_labels_raw = doc.get("labels", [])
+        gold_relations_with_names = []
+        for label in gold_labels_raw:
+            head_idx = label.get("h")
+            tail_idx = label.get("t")
+            relation = label.get("r", "")
+            evidence = label.get("evidence", [])
+            
+            gold_relations_with_names.append({
+                "head": get_entity_name(head_idx),
+                "relation": relation,
+                "tail": get_entity_name(tail_idx),
+                "evidence": evidence  # 保留evidence字段
+            })
+        
+        # Build entity list string for prompt
+        entity_list = []
+        for idx, mentions in enumerate(vertex_set):
+            if mentions:
+                name = mentions[0].get("name", f"Entity_{idx}")
+                etype = mentions[0].get("type", "UNKNOWN")
+                entity_list.append(f"[{idx}] {name} ({etype})")
+        entity_list_str = "\n".join(entity_list)
+        
+        # Store both raw and converted gold labels
+        gold_output = {
+            "relations": gold_relations_with_names,
+            "raw_labels": gold_labels_raw  # Keep original for official evaluation
+        }
         
         if mode == "full":
             yield {
                 "question": full_text,
-                "solution": json.dumps(gold_relations, ensure_ascii=False),
-                "gold": json.dumps(gold_relations, ensure_ascii=False),
+                "entity_list": entity_list_str,
+                "solution": json.dumps(gold_output, ensure_ascii=False),
+                "gold": json.dumps(gold_output, ensure_ascii=False),
                 "extract_template": json.dumps(extract_template, ensure_ascii=False),
                 "dataset": "docred",
+                "vertex_set": vertex_set,  # Keep for potential post-processing
             }
         
         elif mode == "chunks":
@@ -284,11 +325,13 @@ def load_docred(
             for i, chunk in enumerate(chunks):
                 yield {
                     "question": chunk,
-                    "solution": json.dumps(gold_relations, ensure_ascii=False),
-                    "gold": json.dumps(gold_relations, ensure_ascii=False),
+                    "entity_list": entity_list_str,
+                    "solution": json.dumps(gold_output, ensure_ascii=False),
+                    "gold": json.dumps(gold_output, ensure_ascii=False),
                     "extract_template": json.dumps(extract_template, ensure_ascii=False),
                     "chunk_info": f"Chunk {i+1}/{len(chunks)}",
                     "dataset": "docred",
+                    "vertex_set": vertex_set,
                 }
         
         elif mode == "partitioned":
@@ -300,11 +343,13 @@ def load_docred(
                 
                 yield {
                     "question": partition,
-                    "solution": json.dumps(gold_relations, ensure_ascii=False),
-                    "gold": json.dumps(gold_relations, ensure_ascii=False),
+                    "entity_list": entity_list_str,
+                    "solution": json.dumps(gold_output, ensure_ascii=False),
+                    "gold": json.dumps(gold_output, ensure_ascii=False),
                     "extract_template": json.dumps(extract_template, ensure_ascii=False),
                     "partition_info": f"Partition {i+1}/{num_partitions}",
                     "dataset": "docred",
+                    "vertex_set": vertex_set,
                 }
 
 

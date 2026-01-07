@@ -767,6 +767,36 @@ Present your reasoning, and then clearly state your final answer at the end.
 
 # ============= Document Extraction Dataset Prompts =============
 
+# DocRED relation types (Wikidata property IDs)
+DOCRED_RELATIONS = """Available relation types (use ONLY these Wikidata property IDs):
+P6: head of government | P17: country | P19: place of birth | P20: place of death
+P22: father | P25: mother | P26: spouse | P27: country of citizenship | P30: continent
+P31: instance of | P35: head of state | P36: capital | P37: official language
+P39: position held | P40: child | P50: author | P54: member of sports team
+P57: director | P58: screenwriter | P69: educated at | P86: composer
+P102: member of political party | P108: employer | P112: founded by | P118: league
+P123: publisher | P127: owned by | P131: located in the administrative territorial entity
+P136: genre | P137: operator | P140: religion | P150: contains administrative territorial entity
+P155: follows | P156: followed by | P159: headquarters location | P161: cast member
+P162: producer | P166: award received | P170: creator | P171: parent taxon
+P172: ethnic group | P175: performer | P176: manufacturer | P178: developer
+P179: series | P190: sister city | P194: legislative body | P205: basin country
+P206: located in or next to body of water | P241: military branch | P264: record label
+P272: production company | P276: location | P279: subclass of | P355: subsidiary
+P361: part of | P364: original language of work | P400: platform
+P403: mouth of the watercourse | P449: original network | P463: member of
+P488: chairperson | P495: country of origin | P527: has part | P551: residence
+P569: date of birth | P570: date of death | P571: inception
+P576: dissolved, abolished or demolished | P577: publication date | P580: start time
+P582: end time | P585: point in time | P607: conflict | P674: characters
+P676: lyrics by | P706: located on terrain feature | P710: participant
+P737: influenced by | P740: location of formation | P749: parent organization
+P800: notable work | P807: separated from | P840: narrative location | P937: work location
+P1001: applies to jurisdiction | P1056: product or material produced
+P1198: unemployment rate | P1336: territory claimed by | P1344: participant of
+P1365: replaces | P1366: replaced by | P1376: capital of
+P1412: languages spoken, written or signed | P1441: present in work | P3373: sibling"""
+
 def build_extraction_prompts_sequential(dataset: str, role: str, question: str, item: dict, method=None, args=None):
     """
     Unified extraction prompts for DocRED/CORD/FUNSD/FinER datasets (Sequential mode).
@@ -784,9 +814,16 @@ def build_extraction_prompts_sequential(dataset: str, role: str, question: str, 
     
     # Dataset-specific instructions
     if dataset == "docred":
-        task_desc = "document-level relation extraction. Extract all entity pairs and their semantic relationships."
-        focus_areas = "entity mentions (persons, organizations, locations), relationships between entities (e.g., 'founder_of', 'located_in', 'employed_by')"
-        output_constraint = "Fill the 'relations' array with all found entity pairs and their relationship types."
+        task_desc = "document-level relation extraction using Wikidata property IDs."
+        focus_areas = "named entities (persons, organizations, locations, dates, etc.) and their relationships"
+        output_constraint = f"""CRITICAL: The 'relation' field MUST be a Wikidata property ID (e.g., P17, P569).
+The 'evidence' field is a list of sentence indices (0-indexed) that support the relation.
+{DOCRED_RELATIONS}
+
+Examples of correct output format:
+- {{"head": "Barack Obama", "relation": "P19", "tail": "Honolulu", "evidence": [0, 1]}} (place of birth, supported by sentences 0 and 1)
+- {{"head": "Paris", "relation": "P17", "tail": "France", "evidence": [2]}} (country, supported by sentence 2)
+- {{"head": "John", "relation": "P569", "tail": "1990", "evidence": [0]}} (date of birth)"""
     
     elif dataset == "cord":
         task_desc = "receipt/invoice information extraction. Extract structured purchase information."
@@ -867,13 +904,22 @@ Continue organization:
 """
     
     elif role == "judger":
+        # Get entity list for DocRED
+        entity_list = item.get("entity_list", "")
+        docred_entity_section = ""
+        if dataset == "docred" and entity_list:
+            docred_entity_section = f"""
+Named Entities in Document (use EXACT names from this list):
+{entity_list}
+"""
+        
         user_prompt = f"""You are the Final Extraction Agent.
 
 Task: {task_desc}
 
 Document Content:
 {question}
-
+{docred_entity_section}
 You have latent information from previous agents analyzing this document.
 
 Target Extraction Schema:
@@ -887,6 +933,7 @@ Instructions:
 5. Output ONLY valid JSON matching the schema
 6. Do NOT add any explanatory text outside JSON
 7. Ensure all numeric values are strings if they include currency symbols
+8. For DocRED: Use EXACT entity names from the entity list above
 
 Extract now (JSON only):
 """
@@ -914,8 +961,9 @@ def build_extraction_prompts_hierarchical(dataset: str, role: str, question: str
     
     # Dataset-specific instructions
     if dataset == "docred":
-        task_desc = "document-level relation extraction"
-        focus_areas = "entity mentions and their relationships"
+        task_desc = "document-level relation extraction using Wikidata property IDs"
+        focus_areas = "named entities and their relationships using Wikidata IDs"
+        docred_hint = f"\n\n{DOCRED_RELATIONS}"
     
     elif dataset == "cord":
         task_desc = "receipt/invoice extraction"
@@ -988,6 +1036,28 @@ Partition 3 extraction:
 """
     
     elif role == "judger":
+        # Build DocRED-specific instructions
+        docred_instructions = ""
+        # Get entity list for DocRED
+        entity_list = item.get("entity_list", "")
+        docred_instructions = ""
+        if dataset == "docred":
+            entity_section = ""
+            if entity_list:
+                entity_section = f"""
+Named Entities (use EXACT names from this list):
+{entity_list}
+"""
+            docred_instructions = f"""
+CRITICAL for DocRED: The 'relation' field MUST be a Wikidata property ID (e.g., P17, P569).
+The 'evidence' field is a list of sentence indices (0-indexed) that support the relation.
+{DOCRED_RELATIONS}
+{entity_section}
+Examples:
+- {{"head": "Barack Obama", "relation": "P19", "tail": "Honolulu", "evidence": [0, 1]}} (place of birth)
+- {{"head": "Paris", "relation": "P17", "tail": "France", "evidence": [2]}} (country)
+"""
+        
         user_prompt = f"""You are the Final Synthesizer.
 
 Task: {task_desc}
@@ -999,7 +1069,7 @@ You have latent information from all document partitions analyzing this content.
 
 Target Extraction Schema:
 {template_str}
-
+{docred_instructions}
 Instructions:
 1. Merge information from all partitions
 2. Remove duplicate entries
@@ -1008,6 +1078,7 @@ Instructions:
 5. For missing fields, use "" or []
 6. Output ONLY valid JSON matching the schema
 7. No extra text outside JSON
+8. For DocRED: Use EXACT entity names from the list
 
 Final extraction (JSON only):
 """
@@ -1085,9 +1156,15 @@ def build_extraction_prompts_text_mas_sequential(dataset: str, role: str, questi
     
     # Dataset-specific instructions
     if dataset == "docred":
-        task_desc = "document-level relation extraction"
-        focus_areas = "entity mentions and their relationships"
-        output_constraint = "Fill the 'relations' array with all entity pairs and relationship types."
+        task_desc = "document-level relation extraction using Wikidata property IDs"
+        focus_areas = "named entities and their relationships (using Wikidata relation IDs like P17, P569, P27)"
+        output_constraint = f"""CRITICAL: The 'relation' field MUST be a Wikidata property ID.
+The 'evidence' field is a list of sentence indices (0-indexed) that support the relation.
+{DOCRED_RELATIONS}
+
+Examples:
+- {{"head": "Barack Obama", "relation": "P19", "tail": "Honolulu", "evidence": [0, 1]}} (place of birth)
+- {{"head": "Paris", "relation": "P17", "tail": "France", "evidence": [2]}} (country)"""
     elif dataset == "cord":
         task_desc = "receipt/invoice information extraction"
         focus_areas = "menu items, prices, subtotal, total, tax"
@@ -1163,13 +1240,22 @@ Output the organized, complete list of extracted information.
 """
     
     elif role == "judger":
+        # Get entity list for DocRED
+        entity_list = item.get("entity_list", "")
+        docred_entity_section = ""
+        if dataset == "docred" and entity_list:
+            docred_entity_section = f"""
+Named Entities (use EXACT names):
+{entity_list}
+"""
+        
         user_prompt = f"""You are the Final Extraction Agent.
 
 Task: {task_desc}
 
 Document Content:
 {question}
-
+{docred_entity_section}
 Target Schema:
 {template_str}
 
@@ -1182,6 +1268,7 @@ Instructions:
 3. Use "" or [] for missing fields
 4. Output ONLY valid JSON matching the schema
 5. No explanatory text outside JSON
+6. For DocRED: Use EXACT entity names from the list
 
 Extract now (JSON only):
 """
@@ -1219,9 +1306,15 @@ def build_extraction_prompts_text_mas_hierarchical(dataset: str, role: str, ques
     
     # Dataset-specific instructions (same as sequential)
     if dataset == "docred":
-        task_desc = "document-level relation extraction"
-        focus_areas = "entity mentions and their relationships"
-        output_constraint = "Fill the 'relations' array with all entity pairs and relationship types."
+        task_desc = "document-level relation extraction using Wikidata property IDs"
+        focus_areas = "named entities and their relationships (using Wikidata relation IDs like P17, P569, P27)"
+        output_constraint = f"""CRITICAL: The 'relation' field MUST be a Wikidata property ID.
+The 'evidence' field is a list of sentence indices (0-indexed) that support the relation.
+{DOCRED_RELATIONS}
+
+Examples:
+- {{"head": "Barack Obama", "relation": "P19", "tail": "Honolulu", "evidence": [0, 1]}} (place of birth)
+- {{"head": "Paris", "relation": "P17", "tail": "France", "evidence": [2]}} (country)"""
     elif dataset == "cord":
         task_desc = "receipt/invoice information extraction"
         focus_areas = "menu items, prices, subtotal, total, tax"
@@ -1302,13 +1395,22 @@ Merged findings:
 """
     
     elif role == "judger":
+        # Get entity list for DocRED
+        entity_list = item.get("entity_list", "")
+        docred_entity_section = ""
+        if dataset == "docred" and entity_list:
+            docred_entity_section = f"""
+Named Entities (use EXACT names):
+{entity_list}
+"""
+        
         user_prompt = f"""You are the Final Extraction Agent.
 
 Task: {task_desc}
 
 Full Document Content:
 {question}
-
+{docred_entity_section}
 Target Schema:
 {template_str}
 
@@ -1321,6 +1423,7 @@ Instructions:
 3. Remove duplicates, keep unique instances
 4. Use "" or [] for missing fields
 5. Output ONLY valid JSON
+6. For DocRED: Use EXACT entity names from the list
 
 Final extraction (JSON only):
 """
