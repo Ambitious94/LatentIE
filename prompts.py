@@ -1207,13 +1207,7 @@ def build_extraction_prompts_text_mas_sequential(dataset: str, role: str, questi
     if dataset == "docred":
         task_desc = "document-level relation extraction using Wikidata property IDs"
         focus_areas = "named entities and their relationships (using Wikidata relation IDs like P17, P569, P27)"
-        output_constraint = f"""CRITICAL: The 'relation' field MUST be a Wikidata property ID.
-The 'evidence' field is a list of sentence indices (0-indexed) that support the relation.
-{DOCRED_RELATIONS_COMPACT}
-
-Examples:
-- {{"head": "Barack Obama", "relation": "P19", "tail": "Honolulu", "evidence": [0, 1]}} (place of birth)
-- {{"head": "Paris", "relation": "P17", "tail": "France", "evidence": [2]}} (country)"""
+        output_constraint = DOCRED_RELATIONS_FULL
     elif dataset == "cord":
         task_desc = "receipt/invoice information extraction"
         focus_areas = "menu items, prices, subtotal, total, tax"
@@ -1358,13 +1352,7 @@ def build_extraction_prompts_text_mas_hierarchical(dataset: str, role: str, ques
     if dataset == "docred":
         task_desc = "document-level relation extraction using Wikidata property IDs"
         focus_areas = "named entities and their relationships (using Wikidata relation IDs like P17, P569, P27)"
-        output_constraint = f"""CRITICAL: The 'relation' field MUST be a Wikidata property ID.
-The 'evidence' field is a list of sentence indices (0-indexed) that support the relation.
-{DOCRED_RELATIONS_COMPACT}
-
-Examples:
-- {{"head": "Barack Obama", "relation": "P19", "tail": "Honolulu", "evidence": [0, 1]}} (place of birth)
-- {{"head": "Paris", "relation": "P17", "tail": "France", "evidence": [2]}} (country)"""
+        output_constraint = DOCRED_RELATIONS_FULL
     elif dataset == "cord":
         task_desc = "receipt/invoice information extraction"
         focus_areas = "menu items, prices, subtotal, total, tax"
