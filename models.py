@@ -202,17 +202,14 @@ class ModelWrapper:
         """
         if self.is_vision_model and self.processor:
             # Process batch for vision-language model
-            # For VL models, process one sample at a time to avoid image token mismatch
-            all_input_ids = []
-            all_attention_masks = []
-            all_prompts = []
-            extra_inputs = {"pixel_values": [], "image_grid_thw": []}
+            prompts = []
+            all_images = []
             
             for messages in batch_messages:
                 text_prompt = self.processor.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=add_generation_prompt
                 )
-                all_prompts.append(text_prompt)
+                prompts.append(text_prompt)
                 
                 # Extract images from messages
                 images = []
@@ -223,54 +220,31 @@ class ModelWrapper:
                             for item in content:
                                 if isinstance(item, dict) and 'image' in item and item['image'] is not None:
                                     images.append(item['image'])
-                
-                # Process single sample
-                inputs = self.processor(
-                    text=[text_prompt],
-                    images=images if images else None,
-                    return_tensors="pt",
-                    padding=False,
-                )
-                all_input_ids.append(inputs["input_ids"].squeeze(0))
-                all_attention_masks.append(inputs["attention_mask"].squeeze(0))
-                if "pixel_values" in inputs:
-                    extra_inputs["pixel_values"].append(inputs["pixel_values"])
-                if "image_grid_thw" in inputs:
-                    extra_inputs["image_grid_thw"].append(inputs["image_grid_thw"])
+                all_images.append(images if images else None)
             
-            # Pad sequences to same length
-            max_len = max(ids.shape[0] for ids in all_input_ids)
-            padded_input_ids = []
-            padded_attention_masks = []
-            pad_token_id = self.tokenizer.pad_token_id or 0
+            # Process with processor - let it handle the batch correctly
+            inputs = self.processor(
+                text=prompts,
+                images=all_images,
+                return_tensors="pt",
+                padding=True,
+            )
+            input_ids = inputs["input_ids"].to(self.device)
+            attention_mask = inputs["attention_mask"].to(self.device)
             
-            for ids, mask in zip(all_input_ids, all_attention_masks):
-                pad_len = max_len - ids.shape[0]
-                if pad_len > 0:
-                    ids = torch.cat([torch.full((pad_len,), pad_token_id, dtype=ids.dtype), ids])
-                    mask = torch.cat([torch.zeros(pad_len, dtype=mask.dtype), mask])
-                padded_input_ids.append(ids)
-                padded_attention_masks.append(mask)
-            
-            input_ids = torch.stack(padded_input_ids).to(self.device)
-            attention_mask = torch.stack(padded_attention_masks).to(self.device)
-            
-            # Concatenate vision inputs
-            if extra_inputs["pixel_values"]:
-                extra_inputs["pixel_values"] = torch.cat(extra_inputs["pixel_values"], dim=0).to(self.device)
-            else:
-                del extra_inputs["pixel_values"]
-            if extra_inputs["image_grid_thw"]:
-                extra_inputs["image_grid_thw"] = torch.cat(extra_inputs["image_grid_thw"], dim=0).to(self.device)
-            else:
-                del extra_inputs["image_grid_thw"]
+            # Collect extra vision inputs
+            extra_inputs = {}
+            if "pixel_values" in inputs:
+                extra_inputs["pixel_values"] = inputs["pixel_values"].to(self.device)
+            if "image_grid_thw" in inputs:
+                extra_inputs["image_grid_thw"] = inputs["image_grid_thw"].to(self.device)
             
             tokens_batch: List[List[str]] = []
             for ids_row, mask_row in zip(input_ids, attention_mask):
                 active_ids = ids_row[mask_row.bool()].tolist()
                 tokens_batch.append(self.tokenizer.convert_ids_to_tokens(active_ids))
             
-            return all_prompts, input_ids, attention_mask, tokens_batch, extra_inputs if extra_inputs else None
+            return prompts, input_ids, attention_mask, tokens_batch, extra_inputs if extra_inputs else None
         else:
             # Text-only batch processing
             prompts: List[str] = []
