@@ -209,15 +209,27 @@ class ModelWrapper:
                     messages, tokenize=False, add_generation_prompt=add_generation_prompt
                 )
                 prompts.append(text_prompt)
-                # Extract images from this conversation
-                images = process_vision_info(messages) if _HAS_QWEN_VL_UTILS else []
+                # Extract images from messages - look for content items with 'image' key
+                images = []
+                for message in messages:
+                    if isinstance(message, dict) and 'content' in message:
+                        content = message['content']
+                        if isinstance(content, list):
+                            for item in content:
+                                if isinstance(item, dict) and 'image' in item and item['image'] is not None:
+                                    images.append(item['image'])
                 all_images.append(images if images else None)
             
+            # Flatten images list
+            flat_images = []
+            for imgs in all_images:
+                if imgs:
+                    flat_images.extend(imgs)
+            
             # Process all prompts and images together
-            flat_images = [img for imgs in all_images if imgs for img in imgs] if any(all_images) else None
             inputs = self.processor(
                 text=prompts,
-                images=flat_images,
+                images=flat_images if flat_images else None,
                 return_tensors="pt",
                 padding=True,
             )

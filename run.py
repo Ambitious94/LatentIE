@@ -266,14 +266,6 @@ def main():
     for item in dataset_iter:
         if processed >= args.max_samples:
             break
-        
-        # Debug: Check if item has image
-        print(f"[RUN.PY DEBUG] Item keys: {item.keys()}")
-        if 'image' in item:
-            print(f"[RUN.PY DEBUG] Item has image: {type(item['image'])}")
-        else:
-            print(f"[RUN.PY DEBUG] Item does NOT have image key")
-        
         batch.append(item)
         if len(batch) == args.generate_bs or processed + len(batch) == args.max_samples:
             processed, preds = process_batch(

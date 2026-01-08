@@ -116,16 +116,6 @@ class LatentMASMethod:
                         for item in items
                     ]
 
-            print(f"\n[LATENT_MAS DEBUG] Agent: {agent.role}")
-            print(f"[LATENT_MAS DEBUG] Number of messages: {len(batch_messages)}")
-            for msg_idx, msg in enumerate(batch_messages):
-                has_image = any('image' in m for m in msg if isinstance(m, dict))
-                print(f"[LATENT_MAS DEBUG] Message {msg_idx} has image content: {has_image}")
-                if has_image:
-                    for m in msg:
-                        if isinstance(m, dict) and 'image' in m:
-                            print(f"[LATENT_MAS DEBUG]   Image type: {type(m['image'])}")
-
             prompts, input_ids, attention_mask, tokens_batch, extra_inputs = self.model.prepare_chat_batch(
                 batch_messages, add_generation_prompt=True
             )
