@@ -538,6 +538,11 @@ def load_funsd(
         ann_dir = annotations_dir or os.path.join(base_dir, "annotations")
         img_dir = images_dir or os.path.join(base_dir, "images")
         
+        print(f"[FUNSD DEBUG] base_dir: {base_dir}")
+        print(f"[FUNSD DEBUG] img_dir: {img_dir}")
+        print(f"[FUNSD DEBUG] ann_dir: {ann_dir}")
+        print(f"[FUNSD DEBUG] images_dir param: {images_dir}")
+        
         for img_info in data["images"]:
             file_name = img_info.get("file_name", "")
             segm_file = img_info.get("segm_file", "")
@@ -547,11 +552,15 @@ def load_funsd(
             image_obj = None
             if img_dir:
                 img_path = os.path.join(img_dir, file_name)
+                print(f"[FUNSD DEBUG] Trying to load image: {img_path}, exists: {os.path.exists(img_path)}")
                 if os.path.exists(img_path):
                     try:
                         image_obj = Image.open(img_path).convert("RGB")
+                        print(f"[FUNSD DEBUG] Successfully loaded image: {file_name}")
                     except Exception as e:
                         print(f"[Warning] Failed to load image {img_path}: {e}")
+                else:
+                    print(f"[Warning] Image file not found: {img_path}")
             
             # Load segm_file for entities and relations
             gold = {"entities": [], "relations": []}
