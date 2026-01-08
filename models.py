@@ -213,7 +213,9 @@ class ModelWrapper:
                 
                 # Extract images using qwen_vl_utils if available
                 if _HAS_QWEN_VL_UTILS:
-                    images = process_vision_info(messages)
+                    vision_info = process_vision_info(messages)
+                    # process_vision_info returns list of images
+                    images = vision_info if isinstance(vision_info, list) else list(vision_info) if vision_info else []
                 else:
                     # Fallback: extract manually
                     images = []
