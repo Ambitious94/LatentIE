@@ -211,18 +211,22 @@ class ModelWrapper:
                 )
                 prompts.append(text_prompt)
                 
-                # Extract images from messages
-                images = []
-                for message in messages:
-                    if isinstance(message, dict) and 'content' in message:
-                        content = message['content']
-                        if isinstance(content, list):
-                            for item in content:
-                                if isinstance(item, dict) and 'image' in item and item['image'] is not None:
-                                    images.append(item['image'])
+                # Extract images using qwen_vl_utils if available
+                if _HAS_QWEN_VL_UTILS:
+                    images = process_vision_info(messages)
+                else:
+                    # Fallback: extract manually
+                    images = []
+                    for message in messages:
+                        if isinstance(message, dict) and 'content' in message:
+                            content = message['content']
+                            if isinstance(content, list):
+                                for item in content:
+                                    if isinstance(item, dict) and 'image' in item and item['image'] is not None:
+                                        images.append(item['image'])
                 all_images.append(images if images else None)
             
-            # Process with processor - let it handle the batch correctly
+            # Process with processor
             inputs = self.processor(
                 text=prompts,
                 images=all_images,
