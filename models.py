@@ -218,18 +218,14 @@ class ModelWrapper:
                             for item in content:
                                 if isinstance(item, dict) and 'image' in item and item['image'] is not None:
                                     images.append(item['image'])
+                # Keep images as list per sample, or None if no images
                 all_images.append(images if images else None)
             
-            # Flatten images list
-            flat_images = []
-            for imgs in all_images:
-                if imgs:
-                    flat_images.extend(imgs)
-            
             # Process all prompts and images together
+            # Pass images as nested list structure to match prompts batch
             inputs = self.processor(
                 text=prompts,
-                images=flat_images if flat_images else None,
+                images=all_images,
                 return_tensors="pt",
                 padding=True,
             )
