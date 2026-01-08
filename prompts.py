@@ -1103,14 +1103,13 @@ Partition 3 extraction:
     elif role == "judger":
         # Get entity list for DocRED
         entity_list = item.get("entity_list", "")
-        docred_entity_section = ""
-        if dataset == "docred" and entity_list:
+        
+        if dataset == "docred":
             docred_entity_section = f"""
 Entities (use ONLY these):
 {entity_list}
 """
-        
-        user_prompt = f"""Task: {task_desc}
+            user_prompt = f"""Task: {task_desc}
 
 {docred_entity_section}Document:
 {question}
@@ -1130,6 +1129,69 @@ Rules:
 - evidence: sentence indices from 0
 
 You have latent info from all partitions. Begin your analysis:
+"""
+        elif dataset == "funsd":
+            user_prompt = f"""Task: {task_desc}
+
+Document:
+{question}
+
+Output Format:
+{template_str}
+
+Instructions:
+1. Extract ALL form fields, questions, answers, and headers from the document
+2. Identify relationships between questions and answers
+3. Output valid JSON with 'entities' and 'relations' arrays
+
+Entity labels: question, answer, header, other
+
+Output the extracted information as JSON:
+"""
+        elif dataset == "cord":
+            user_prompt = f"""Task: {task_desc}
+
+Document:
+{question}
+
+Output Format:
+{template_str}
+
+Instructions:
+1. Extract ALL menu items with prices
+2. Calculate subtotal, tax, and total amounts
+3. Output valid JSON matching the schema
+
+Output the extracted information as JSON:
+"""
+        elif dataset == "finer":
+            user_prompt = f"""Task: {task_desc}
+
+Document:
+{question}
+
+Output Format:
+{template_str}
+
+Instructions:
+1. Extract ALL financial entities from the text
+2. Identify entity types and positions
+3. Output valid JSON with 'entities' array
+
+Output the extracted information as JSON:
+"""
+        else:
+            user_prompt = f"""Task: {task_desc}
+
+Document:
+{question}
+
+{output_constraint}
+
+Output Format:
+{template_str}
+
+You have latent info from all partitions. Output the final extraction as JSON:
 """
     
     # Check if item has image (multimodal)
