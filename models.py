@@ -214,6 +214,7 @@ class ModelWrapper:
                 # Extract images using qwen_vl_utils if available
                 if _HAS_QWEN_VL_UTILS:
                     vision_info = process_vision_info(messages)
+                    print(f"[DEBUG] process_vision_info returned: type={type(vision_info)}, value={vision_info if not isinstance(vision_info, (list, tuple)) or len(str(vision_info)) < 100 else f'[{len(vision_info)} items]'}")
                     # process_vision_info returns list of images
                     images = vision_info if isinstance(vision_info, list) else list(vision_info) if vision_info else []
                 else:
@@ -226,12 +227,18 @@ class ModelWrapper:
                                 for item in content:
                                     if isinstance(item, dict) and 'image' in item and item['image'] is not None:
                                         images.append(item['image'])
-                all_images.append(images if images else None)
+                # Always append list (empty list if no images)
+                print(f"[DEBUG] Final images list: {len(images)} images")
+                all_images.append(images)
+            
+            # Only pass images if at least one sample has images
+            has_images = any(imgs for imgs in all_images)
+            print(f"[DEBUG] has_images={has_images}, all_images structure: {[len(imgs) for imgs in all_images]}")
             
             # Process with processor
             inputs = self.processor(
                 text=prompts,
-                images=all_images,
+                images=all_images if has_images else None,
                 return_tensors="pt",
                 padding=True,
             )
