@@ -136,6 +136,11 @@ def main():
 
     args = parser.parse_args()
     
+    # Force batch_size=1 for vision models to avoid image token mismatch
+    if args.use_vision_model:
+        print("[INFO] Vision model detected, forcing batch_size=1")
+        args.generate_bs = 1
+    
     if args.method == "latent_mas" and args.use_vllm:
         args.use_second_HF_model = True 
         args.enable_prefix_caching = True
