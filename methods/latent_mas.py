@@ -124,18 +124,28 @@ class LatentMASMethod:
                 prev_past_len = _past_length(past_kv)
 
                 if self.args.think:
+                    # For vision models, append <think> token to input_ids instead of re-tokenizing
+                    if self.model.is_vision_model and extra_inputs:
+                        think_token_id = self.model.tokenizer.encode("<think>", add_special_tokens=False)[0]
+                        # Append think token to each sequence
+                        think_ids = torch.full((input_ids.shape[0], 1), think_token_id, dtype=input_ids.dtype, device=input_ids.device)
+                        wrapped_ids = torch.cat([input_ids, think_ids], dim=1)
+                        wrapped_mask = torch.cat([attention_mask, torch.ones((attention_mask.shape[0], 1), dtype=attention_mask.dtype, device=attention_mask.device)], dim=1)
+                    else:
+                        # Text-only model: re-tokenize with <think>
                         wrapped_prompts = [f"{prompt}<think>" for prompt in prompts]
-                else: 
-                    wrapped_prompts = prompts
+                        wrapped_encoded = self.model.tokenizer(
+                            wrapped_prompts,
+                            return_tensors="pt",
+                            padding=True,
+                            add_special_tokens=False,
+                        )
+                        wrapped_ids = wrapped_encoded["input_ids"].to(self.model.device)
+                        wrapped_mask = wrapped_encoded["attention_mask"].to(self.model.device)
+                else:
+                    wrapped_ids = input_ids
+                    wrapped_mask = attention_mask
 
-                wrapped_encoded = self.model.tokenizer(
-                    wrapped_prompts,
-                    return_tensors="pt",
-                    padding=True,
-                    add_special_tokens=False,
-                )
-                wrapped_ids = wrapped_encoded["input_ids"].to(self.model.device)
-                wrapped_mask = wrapped_encoded["attention_mask"].to(self.model.device)
                 wrapped_tokens_batch: List[List[str]] = []
                 for ids_row, mask_row in zip(wrapped_ids, wrapped_mask):
                     active_ids = ids_row[mask_row.bool()].tolist()
@@ -167,11 +177,13 @@ class LatentMASMethod:
                 for idx in range(batch_size):
                     mask = wrapped_mask[idx].bool()
                     trimmed_ids = wrapped_ids[idx][mask].to("cpu").tolist()
+                    # For vision models, use text representation of input_ids instead of wrapped_prompts
+                    input_repr = prompts[idx] if not (self.model.is_vision_model and extra_inputs) else f"[Vision input with {len(trimmed_ids)} tokens]"
                     agent_traces[idx].append(
                         {
                             "name": agent.name,
                             "role": agent.role,
-                            "input": wrapped_prompts[idx],
+                            "input": input_repr,
                             "input_ids": trimmed_ids,
                             "input_tokens": wrapped_tokens_batch[idx],
                             "latent_steps": self.latent_steps,
@@ -183,18 +195,27 @@ class LatentMASMethod:
                 past_for_decoding = past_kv if self.latent_steps > 0 else None
 
                 if self.args.think:
+                    # For vision models, append <think> token to input_ids
+                    if self.model.is_vision_model and extra_inputs:
+                        think_token_id = self.model.tokenizer.encode("<think>", add_special_tokens=False)[0]
+                        think_ids = torch.full((input_ids.shape[0], 1), think_token_id, dtype=input_ids.dtype, device=input_ids.device)
+                        judger_ids = torch.cat([input_ids, think_ids], dim=1)
+                        judger_mask = torch.cat([attention_mask, torch.ones((attention_mask.shape[0], 1), dtype=attention_mask.dtype, device=attention_mask.device)], dim=1)
+                    else:
+                        # Text-only model: re-tokenize with <think>
                         judger_prompts = [f"{prompt}<think>" for prompt in prompts]
-                else: 
-                    judger_prompts = prompts
+                        judger_encoded = self.model.tokenizer(
+                            judger_prompts,
+                            return_tensors="pt",
+                            padding=True,
+                            add_special_tokens=False,
+                        )
+                        judger_ids = judger_encoded["input_ids"].to(self.model.device)
+                        judger_mask = judger_encoded["attention_mask"].to(self.model.device)
+                else:
+                    judger_ids = input_ids
+                    judger_mask = attention_mask
                 
-                judger_encoded = self.model.tokenizer(
-                    judger_prompts,
-                    return_tensors="pt",
-                    padding=True,
-                    add_special_tokens=False,
-                )
-                judger_ids = judger_encoded["input_ids"].to(self.model.device)
-                judger_mask = judger_encoded["attention_mask"].to(self.model.device)
                 judger_tokens_batch: List[List[str]] = []
                 for ids_row, mask_row in zip(judger_ids, judger_mask):
                     active_ids = ids_row[mask_row.bool()].tolist()
