@@ -611,6 +611,21 @@ def load_funsd(
                     result["image"] = image_obj
                 yield result
             
+            elif mode == "chunks":
+                # For COCO format with chunks mode - treat each image as one item
+                result = {
+                    "question": full_text,
+                    "solution": json.dumps(gold, ensure_ascii=False),
+                    "gold": json.dumps(gold, ensure_ascii=False),
+                    "extract_template": json.dumps(extract_template, ensure_ascii=False),
+                    "chunk_info": f"Image {file_name}",
+                    "dataset": "funsd",
+                    "doc_id": file_name,
+                }
+                if image_obj:
+                    result["image"] = image_obj
+                yield result
+            
             elif mode == "partitioned":
                 # For COCO format, each image is a partition
                 result = {
