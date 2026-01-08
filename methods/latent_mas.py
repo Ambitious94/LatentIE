@@ -201,6 +201,7 @@ class LatentMASMethod:
                         think_ids = torch.full((input_ids.shape[0], 1), think_token_id, dtype=input_ids.dtype, device=input_ids.device)
                         judger_ids = torch.cat([input_ids, think_ids], dim=1)
                         judger_mask = torch.cat([attention_mask, torch.ones((attention_mask.shape[0], 1), dtype=attention_mask.dtype, device=attention_mask.device)], dim=1)
+                        judger_prompts = prompts  # Use original prompts for logging
                     else:
                         # Text-only model: re-tokenize with <think>
                         judger_prompts = [f"{prompt}<think>" for prompt in prompts]
@@ -215,6 +216,7 @@ class LatentMASMethod:
                 else:
                     judger_ids = input_ids
                     judger_mask = attention_mask
+                    judger_prompts = prompts  # Use original prompts for logging
                 
                 judger_tokens_batch: List[List[str]] = []
                 for ids_row, mask_row in zip(judger_ids, judger_mask):
