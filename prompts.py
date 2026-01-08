@@ -1133,8 +1133,15 @@ You have latent info from all partitions. Begin your analysis:
 """
     
     # Check if item has image (multimodal)
+    print(f"[PROMPTS DEBUG] Checking item for image...")
+    print(f"[PROMPTS DEBUG] 'image' in item: {'image' in item}")
+    if 'image' in item:
+        print(f"[PROMPTS DEBUG] item['image'] is not None: {item['image'] is not None}")
+        print(f"[PROMPTS DEBUG] item['image'] type: {type(item['image'])}")
+    
     if "image" in item and item["image"] is not None:
         # Multimodal format: image + text
+        print(f"[PROMPTS DEBUG] Building MULTIMODAL message with image")
         return [
             {"role": "system", "content": system_message},
             {"role": "user", "content": [
@@ -1144,6 +1151,7 @@ You have latent info from all partitions. Begin your analysis:
         ]
     else:
         # Text-only format
+        print(f"[PROMPTS DEBUG] Building TEXT-ONLY message (NO IMAGE)")
         return [
             {"role": "system", "content": system_message},
             {"role": "user", "content": user_prompt},
