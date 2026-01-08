@@ -114,6 +114,7 @@ def main():
     parser.add_argument("--use_vision_model", action="store_true", help="Use vision-language model (Qwen-VL) for multimodal tasks")
     parser.add_argument("--image_path", type=str, default=None, help="Path to image file for multimodal extraction (CORD/FUNSD)")
     parser.add_argument("--image_dir", type=str, default=None, help="Directory containing images for batch processing")
+    parser.add_argument("--annotations_dir", type=str, default=None, help="Directory containing annotation files (FUNSD segm_file JSONs)")
 
     parser.add_argument("--max_new_tokens", type=int, default=4096)
     parser.add_argument("--latent_steps", type=int, default=0, help="Number of latent steps for LatentMAS method")
@@ -237,7 +238,9 @@ def main():
             chunk_size=args.chunk_size,
             overlap=args.chunk_overlap,
             num_partitions=args.num_partitions,
-            image_path=args.image_path  # Pass image path for multimodal
+            image_path=args.image_path,  # Pass image path for multimodal
+            annotations_dir=args.annotations_dir,  # Directory for annotation JSONs
+            images_dir=args.image_dir  # Directory for images
         )
     elif args.task == "finer":
         if not args.doc_path:
