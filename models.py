@@ -102,6 +102,13 @@ class ModelWrapper:
                     model_name,
                     torch_dtype=(torch.bfloat16 if torch.cuda.is_available() else torch.float32),
                 )
+                
+                # Load LoRA weights if specified
+                if args and hasattr(args, 'lora_weights') and args.lora_weights:
+                    print(f"[LoRA] Loading LoRA weights from: {args.lora_weights}")
+                    from peft import PeftModel
+                    self.model = PeftModel.from_pretrained(self.model, args.lora_weights)
+                    print("[LoRA] LoRA weights loaded successfully")
         else:
             # Load text-only model
             self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
@@ -111,6 +118,14 @@ class ModelWrapper:
                     model_name,
                     torch_dtype=(torch.bfloat16 if torch.cuda.is_available() else torch.float32),
                 )
+                
+                # Load LoRA weights if specified
+                if args and hasattr(args, 'lora_weights') and args.lora_weights:
+                    print(f"[LoRA] Loading LoRA weights from: {args.lora_weights}")
+                    from peft import PeftModel
+                    self.model = PeftModel.from_pretrained(self.model, args.lora_weights)
+                    print("[LoRA] LoRA weights loaded successfully")
+                    
             if len(self.tokenizer) != self.model.get_input_embeddings().weight.shape[0]:
                 self.model.resize_token_embeddings(len(self.tokenizer))
         

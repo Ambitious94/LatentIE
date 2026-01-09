@@ -125,9 +125,25 @@ def evaluate_funsd(predictions: List[Dict], golds: List[Dict]) -> Dict[str, floa
     
     for pred, gold in zip(predictions, golds):
         try:
-            pred_data = json.loads(pred.get("prediction", "{}"))
+            # Handle prediction - may be string or dict
+            if isinstance(pred, dict):
+                pred_str = pred.get("prediction", "{}")
+            else:
+                pred_str = str(pred) if pred else "{}"
+            pred_data = json.loads(pred_str) if isinstance(pred_str, str) else pred_str
+            
+            # Handle gold - may be string or dict
             gold_data = json.loads(gold) if isinstance(gold, str) else gold
-        except:
+            
+            # Ensure both are dicts
+            if not isinstance(pred_data, dict):
+                pred_data = {}
+            if not isinstance(gold_data, dict):
+                gold_data = {}
+        except Exception as e:
+            print(f"[Warning] Failed to parse prediction/gold: {e}")
+            pred_data = {}
+            gold_data = {}
             continue
         
         # Extract entities

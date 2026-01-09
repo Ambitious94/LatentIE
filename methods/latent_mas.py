@@ -92,17 +92,35 @@ class LatentMASMethod:
 
             # Route to extraction prompts for document extraction datasets
             if self.args.task in ['docred', 'cord', 'funsd', 'finer']:
-                from prompts import build_extraction_prompts_sequential, build_extraction_prompts_hierarchical
-                if self.args.prompt == "sequential":
-                    batch_messages = [
-                        build_extraction_prompts_sequential(dataset=self.args.task, role=agent.role, question=item["question"], item=item, method=self.method_name, args=self.args)
-                        for item in items
-                    ]
-                elif self.args.prompt == "hierarchical":
-                    batch_messages = [
-                        build_extraction_prompts_hierarchical(dataset=self.args.task, role=agent.role, question=item["question"], item=item, method=self.method_name, args=self.args)
-                        for item in items
-                    ]
+                # 检查是否使用LoRA模型，如果是则使用简化prompts
+                use_lora = hasattr(self.args, 'lora_weights') and self.args.lora_weights
+                
+                if use_lora:
+                    # LoRA模型使用简化prompts
+                    from prompts_lora import build_lora_extraction_prompts_sequential, build_lora_extraction_prompts_hierarchical
+                    if self.args.prompt == "sequential":
+                        batch_messages = [
+                            build_lora_extraction_prompts_sequential(dataset=self.args.task, role=agent.role, question=item["question"], item=item, method=self.method_name, args=self.args)
+                            for item in items
+                        ]
+                    elif self.args.prompt == "hierarchical":
+                        batch_messages = [
+                            build_lora_extraction_prompts_hierarchical(dataset=self.args.task, role=agent.role, question=item["question"], item=item, method=self.method_name, args=self.args)
+                            for item in items
+                        ]
+                else:
+                    # 原始模型使用详细prompts
+                    from prompts import build_extraction_prompts_sequential, build_extraction_prompts_hierarchical
+                    if self.args.prompt == "sequential":
+                        batch_messages = [
+                            build_extraction_prompts_sequential(dataset=self.args.task, role=agent.role, question=item["question"], item=item, method=self.method_name, args=self.args)
+                            for item in items
+                        ]
+                    elif self.args.prompt == "hierarchical":
+                        batch_messages = [
+                            build_extraction_prompts_hierarchical(dataset=self.args.task, role=agent.role, question=item["question"], item=item, method=self.method_name, args=self.args)
+                            for item in items
+                        ]
             else:
                 # Original prompts for existing tasks
                 if self.args.prompt == "sequential":

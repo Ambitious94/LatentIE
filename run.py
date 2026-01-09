@@ -113,6 +113,7 @@ def main():
     # Multimodal arguments
     parser.add_argument("--use_vision_model", action="store_true", help="Use vision-language model (Qwen-VL) for multimodal tasks")
     parser.add_argument("--image_path", type=str, default=None, help="Path to image file for multimodal extraction (CORD/FUNSD)")
+    parser.add_argument("--lora_weights", type=str, default=None, help="Path to LoRA weights directory for fine-tuned model")
     parser.add_argument("--image_dir", type=str, default=None, help="Directory containing images for batch processing")
     parser.add_argument("--annotations_dir", type=str, default=None, help="Directory containing annotation files (FUNSD segm_file JSONs)")
 
