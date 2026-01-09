@@ -250,6 +250,13 @@ def main():
     
     train_dataset = DocumentExtractionDataset(train_data, processor, args.task)
     
+    # 检测GPU是否支持bf16
+    use_bf16 = torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
+    if use_bf16:
+        print("Using bf16 training (GPU supports it)")
+    else:
+        print("Using fp16 training (bf16 not supported, falling back to fp16)")
+    
     # 训练配置
     training_args = TrainingArguments(
         output_dir=args.output_dir,
@@ -262,7 +269,8 @@ def main():
         logging_steps=10,
         save_strategy="epoch",
         save_total_limit=3,
-        bf16=True,
+        bf16=use_bf16,
+        fp16=not use_bf16,
         gradient_checkpointing=True,
         dataloader_num_workers=4,
         remove_unused_columns=False,
