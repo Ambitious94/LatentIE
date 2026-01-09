@@ -113,7 +113,9 @@ class DocumentExtractionDataset(Dataset):
         # 简单实现：所有tokens都参与训练
         # 更好的实现：只计算assistant回复部分的loss
         labels = input_ids.clone()
-        labels[labels == self.processor.tokenizer.pad_token_id if hasattr(self.processor, 'tokenizer') else self.processor.pad_token_id] = -100
+        # 获取pad_token_id并mask掉padding部分
+        pad_token_id = self.processor.tokenizer.pad_token_id if hasattr(self.processor, 'tokenizer') else self.processor.pad_token_id
+        labels[labels == pad_token_id] = -100
         
         result = {
             "input_ids": input_ids,
