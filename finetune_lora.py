@@ -184,6 +184,7 @@ def main():
     parser.add_argument("--lora_r", type=int, default=16)
     parser.add_argument("--lora_alpha", type=int, default=32)
     parser.add_argument("--lora_dropout", type=float, default=0.05)
+    parser.add_argument("--max_train_samples", type=int, default=None, help="Maximum number of training samples (use all if not specified)")
     parser.add_argument("--use_vision_model", action="store_true", help="Use vision-language model (auto-detect if not specified)")
     args = parser.parse_args()
     
@@ -238,6 +239,15 @@ def main():
     
     # 加载数据
     train_data = load_training_data(args)
+    
+    # 限制训练样本数量（如果指定）
+    if args.max_train_samples is not None and args.max_train_samples > 0:
+        original_size = len(train_data)
+        train_data = train_data[:args.max_train_samples]
+        print(f"Using {len(train_data)} out of {original_size} training samples")
+    else:
+        print(f"Using all {len(train_data)} training samples")
+    
     train_dataset = DocumentExtractionDataset(train_data, processor, args.task)
     
     # 训练配置
