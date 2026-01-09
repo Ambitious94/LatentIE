@@ -227,12 +227,30 @@ def main():
     
     # 配置LoRA
     print("Configuring LoRA...")
+    
+    # 自动查找模型中的linear层作为target_modules
+    # 这样可以适配不同模型架构（Qwen2, Qwen3, Qwen-VL等）
+    import re
+    target_modules = []
+    for name, module in model.named_modules():
+        if isinstance(module, torch.nn.Linear):
+            # 提取层名称的最后一部分（如 q_proj, k_proj等）
+            layer_name = name.split('.')[-1]
+            if layer_name not in target_modules and not layer_name.startswith('lm_head'):
+                target_modules.append(layer_name)
+    
+    # 如果自动检测失败，使用常见的target_modules
+    if not target_modules:
+        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    
+    print(f"LoRA target modules: {target_modules}")
+    
     lora_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        target_modules=target_modules,
         bias="none"
     )
     
