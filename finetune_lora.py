@@ -257,6 +257,12 @@ def main():
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
     
+    # 确保模型在训练模式并启用梯度
+    model.train()
+    for name, param in model.named_parameters():
+        if 'lora' in name.lower():
+            param.requires_grad = True
+    
     # 加载数据
     train_data = load_training_data(args)
     
@@ -291,7 +297,7 @@ def main():
         save_total_limit=3,
         bf16=use_bf16,
         fp16=not use_bf16,
-        gradient_checkpointing=True,
+        gradient_checkpointing=False,  # 禁用以避免与LoRA冲突
         dataloader_num_workers=4,
         remove_unused_columns=False,
         report_to="none"
