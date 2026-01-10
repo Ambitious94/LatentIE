@@ -296,11 +296,14 @@ def load_docred(
                 entity_list.append(f"[{idx}] {name} ({etype})")
         entity_list_str = "\n".join(entity_list)
         
-        # Store both raw and converted gold labels
+        # Store gold labels - use clean format for training
+        # 训练时只需要relations，评估时可通过vertex_set重建raw格式
         gold_output = {
-            "relations": gold_relations_with_names,
-            "raw_labels": gold_labels_raw  # Keep original for official evaluation
+            "relations": gold_relations_with_names
         }
+        
+        # 同时保存用于评估的原始标签（不包含在训练gold中）
+        raw_labels_for_eval = gold_labels_raw
         
         if mode == "full":
             yield {
@@ -310,7 +313,8 @@ def load_docred(
                 "gold": json.dumps(gold_output, ensure_ascii=False),
                 "extract_template": json.dumps(extract_template, ensure_ascii=False),
                 "dataset": "docred",
-                "vertex_set": vertex_set,  # Keep for potential post-processing
+                "vertex_set": vertex_set,
+                "raw_labels": raw_labels_for_eval,  # For official evaluation
             }
         
         elif mode == "chunks":
@@ -332,6 +336,7 @@ def load_docred(
                     "chunk_info": f"Chunk {i+1}/{len(chunks)}",
                     "dataset": "docred",
                     "vertex_set": vertex_set,
+                    "raw_labels": raw_labels_for_eval,
                 }
         
         elif mode == "partitioned":

@@ -88,39 +88,80 @@ class LatentMASMethod:
         agent_traces: List[List[Dict]] = [[] for _ in range(batch_size)]
         final_texts = ["" for _ in range(batch_size)]
 
+        # 检查是否使用LoRA模型
+        use_lora = hasattr(self.args, 'lora_weights') and self.args.lora_weights
+        
+        # LoRA模型: 直接推理模式，跳过多agent流程
+        if use_lora and self.args.task in ['docred', 'cord', 'funsd', 'finer']:
+            from prompts import build_lora_extraction_prompt
+            
+            # 直接用LoRA prompt生成结果,不需要planner/critic/refiner/judger流程
+            batch_messages = [
+                build_lora_extraction_prompt(
+                    dataset=self.args.task, 
+                    question=item["question"], 
+                    item=item, 
+                    args=self.args
+                )
+                for item in items
+            ]
+            
+            prompts, input_ids, attention_mask, tokens_batch, extra_inputs = self.model.prepare_chat_batch(
+                batch_messages, add_generation_prompt=True
+            )
+            
+            # 直接生成最终结果
+            if self.model.is_vision_model and extra_inputs:
+                gen_ids = self.model.model.generate(
+                    input_ids=input_ids.to(self.model.device),
+                    attention_mask=attention_mask.to(self.model.device),
+                    max_new_tokens=self.judger_max_new_tokens,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    do_sample=True,
+                    **extra_inputs
+                )
+            else:
+                gen_ids = self.model.model.generate(
+                    input_ids=input_ids.to(self.model.device),
+                    attention_mask=attention_mask.to(self.model.device),
+                    max_new_tokens=self.judger_max_new_tokens,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    do_sample=True,
+                )
+            
+            new_ids = gen_ids[:, input_ids.shape[1]:]
+            generated_texts = self.model.tokenizer.batch_decode(new_ids, skip_special_tokens=True)
+            
+            results = []
+            for idx, item in enumerate(items):
+                raw_text = generated_texts[idx] if idx < len(generated_texts) else ""
+                results.append({
+                    "question": item["question"],
+                    "gold": item.get("gold", ""),
+                    "prediction": raw_text,
+                    "trace": [{"role": "lora_direct", "output": raw_text}],
+                    "method": "lora_direct",
+                })
+            return results
+
         for agent in self.agents:
 
             # Route to extraction prompts for document extraction datasets
             if self.args.task in ['docred', 'cord', 'funsd', 'finer']:
-                # 检查是否使用LoRA模型，如果是则使用简化prompts
-                use_lora = hasattr(self.args, 'lora_weights') and self.args.lora_weights
-                
-                if use_lora:
-                    # LoRA模型使用简化prompts
-                    from prompts_lora import build_lora_extraction_prompts_sequential, build_lora_extraction_prompts_hierarchical
-                    if self.args.prompt == "sequential":
-                        batch_messages = [
-                            build_lora_extraction_prompts_sequential(dataset=self.args.task, role=agent.role, question=item["question"], item=item, method=self.method_name, args=self.args)
-                            for item in items
-                        ]
-                    elif self.args.prompt == "hierarchical":
-                        batch_messages = [
-                            build_lora_extraction_prompts_hierarchical(dataset=self.args.task, role=agent.role, question=item["question"], item=item, method=self.method_name, args=self.args)
-                            for item in items
-                        ]
-                else:
-                    # 原始模型使用详细prompts
-                    from prompts import build_extraction_prompts_sequential, build_extraction_prompts_hierarchical
-                    if self.args.prompt == "sequential":
-                        batch_messages = [
-                            build_extraction_prompts_sequential(dataset=self.args.task, role=agent.role, question=item["question"], item=item, method=self.method_name, args=self.args)
-                            for item in items
-                        ]
-                    elif self.args.prompt == "hierarchical":
-                        batch_messages = [
-                            build_extraction_prompts_hierarchical(dataset=self.args.task, role=agent.role, question=item["question"], item=item, method=self.method_name, args=self.args)
-                            for item in items
-                        ]
+                # 原始模型使用详细prompts
+                from prompts import build_extraction_prompts_sequential, build_extraction_prompts_hierarchical
+                if self.args.prompt == "sequential":
+                    batch_messages = [
+                        build_extraction_prompts_sequential(dataset=self.args.task, role=agent.role, question=item["question"], item=item, method=self.method_name, args=self.args)
+                        for item in items
+                    ]
+                elif self.args.prompt == "hierarchical":
+                    batch_messages = [
+                        build_extraction_prompts_hierarchical(dataset=self.args.task, role=agent.role, question=item["question"], item=item, method=self.method_name, args=self.args)
+                        for item in items
+                    ]
             else:
                 # Original prompts for existing tasks
                 if self.args.prompt == "sequential":

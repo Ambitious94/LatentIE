@@ -1543,3 +1543,149 @@ Begin your analysis:
             {"role": "system", "content": system_message},
             {"role": "user", "content": user_prompt},
         ]
+
+
+# ============= LoRA Fine-tuned Model Prompts =============
+# 这些prompts与finetune_lora.py中的训练格式完全一致
+
+# 常用DocRED关系(简化版,不需要列出全部96个)
+DOCRED_COMMON_RELATIONS = """Common relations:
+P17(country), P131(located in), P27(citizenship), P569(birth date), P570(death date), 
+P19(birthplace), P20(death place), P69(educated at), P108(employer), P102(political party), 
+P40(child), P26(spouse), P22(father), P25(mother), P3373(sibling), P161(cast member),
+P57(director), P50(author), P175(performer), P264(record label), P495(country of origin),
+P577(publication date), P571(inception), P159(headquarters), P749(parent org), P355(subsidiary)"""
+
+
+def build_lora_extraction_prompt(dataset: str, question: str, item: dict, args=None):
+    """
+    LoRA微调模型专用prompt - 与训练格式完全一致
+    直接输出JSON,无需多轮agent交互
+    """
+    entity_list = item.get("entity_list", "")
+    
+    system_msg = "You are an expert document information extraction system. Extract structured information accurately and output valid JSON only."
+    
+    if dataset == "docred":
+        instruction = f"""Task: Document-level relation extraction.
+
+Entities in this document:
+{entity_list}
+
+Extract relations between entities using Wikidata property IDs.
+{DOCRED_COMMON_RELATIONS}
+
+Output JSON format:
+{{"relations": [{{"head": "Entity Name", "relation": "P17", "tail": "Country Name", "evidence": [0, 1]}}]}}
+
+Rules:
+1. head/tail must be entity names from the list above
+2. relation must be a valid P-ID
+3. evidence is list of sentence indices (0-based) that support this relation"""
+    
+    elif dataset == "funsd":
+        instruction = """Task: Extract form fields and their semantic relationships.
+
+Identify form entities with these labels:
+- question: Field labels or prompts ("Name:", "Date of Birth:", "Address:")
+- answer: Filled-in values or responses
+- header: Section titles or form headers
+- other: Other text elements
+
+Identify relations:
+- Link questions to their corresponding answers
+- Use entity text for matching
+
+Output JSON format:
+{"entities": [{"text": "Name:", "label": "question"}, {"text": "John Smith", "label": "answer"}], "relations": [{"head": "Name:", "tail": "John Smith"}]}
+
+Example:
+Form text: "Employee Name: Sarah Johnson | Department: Engineering | Salary: $85,000"
+Output:
+{
+  "entities": [
+    {"text": "Employee Name:", "label": "question"},
+    {"text": "Sarah Johnson", "label": "answer"},
+    {"text": "Department:", "label": "question"},
+    {"text": "Engineering", "label": "answer"},
+    {"text": "Salary:", "label": "question"},
+    {"text": "$85,000", "label": "answer"}
+  ],
+  "relations": [
+    {"head": "Employee Name:", "tail": "Sarah Johnson"},
+    {"head": "Department:", "tail": "Engineering"},
+    {"head": "Salary:", "tail": "$85,000"}
+  ]
+}"""
+    
+    elif dataset == "cord":
+        instruction = """Task: Extract receipt/invoice information from OCR text.
+
+Extract these fields:
+1. num_items: Total number of items purchased (integer)
+2. subtotal_price: Price before tax/service charge (string with currency)
+3. service_price: Service charge amount (string)
+4. tax_price: Tax amount (string)
+5. total_price: Final total amount (string)
+6. etc: Additional charges or notes (string)
+
+Important:
+- Extract exact amounts as they appear (e.g., "$12.50", "25.00")
+- If a field is not present, use empty string ""
+- num_items should be an integer count
+
+Output JSON format:
+{"num_items": 3, "subtotal_price": "25.50", "service_price": "2.00", "tax_price": "2.48", "total_price": "29.98", "etc": ""}
+
+Example:
+Input: "Item1 $10.00\nItem2 $15.50\nSubtotal $25.50\nTax $2.48\nTotal $27.98"
+Output: {"num_items": 2, "subtotal_price": "25.50", "tax_price": "2.48", "total_price": "27.98", "service_price": "", "etc": ""}"""
+    
+    elif dataset == "finer":
+        instruction = """Task: Fine-grained financial named entity recognition.
+
+Identify and classify financial entities in text.
+
+Entity types:
+- PER: Person names (executives, analysts, investors)
+- ORG: Organizations (companies, banks, institutions)
+- LOC: Locations (countries, cities, regions)
+- MONEY: Monetary amounts ("$1M", "100 million dollars")
+- DATE: Dates and time periods ("Q3 2023", "March 15")
+- PERCENT: Percentage values ("5%", "15.5 percent")
+- STOCK: Stock tickers and symbols ("AAPL", "NASDAQ:MSFT")
+- METRIC: Financial metrics ("revenue", "profit margin", "EPS")
+- PRODUCT: Financial products ("bonds", "derivatives", "mortgage")
+- LAW: Financial regulations ("Dodd-Frank", "Basel III")
+
+Output JSON format:
+{"entities": [{"text": "Apple Inc.", "type": "ORG", "start": 0, "end": 10}, {"text": "$2.5B", "type": "MONEY", "start": 25, "end": 30}]}
+
+Rules:
+- start/end are character positions in original text (0-based)
+- text is the exact entity string
+- type must be one of the predefined types
+
+Example:
+Input: "Apple reported $95.3B revenue in Q1 2024, up 5%."
+Output: {"entities": [{"text": "Apple", "type": "ORG", "start": 0, "end": 5}, {"text": "$95.3B", "type": "MONEY", "start": 15, "end": 22}, {"text": "Q1 2024", "type": "DATE", "start": 34, "end": 41}, {"text": "5%", "type": "PERCENT", "start": 46, "end": 48}]}"""
+    
+    else:
+        instruction = "Task: Extract information from the document."
+    
+    user_content = f"{instruction}\n\nDocument text:\n{question}\n\nExtract and output JSON:"
+    
+    # 检查是否有图像(多模态)
+    if "image" in item and item["image"] is not None:
+        return [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": [
+                {"type": "image", "image": item["image"]},
+                {"type": "text", "text": user_content}
+            ]},
+        ]
+    else:
+        return [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_content},
+        ]

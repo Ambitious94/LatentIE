@@ -2,8 +2,49 @@
 Evaluation metrics for document extraction tasks
 """
 import json
+import re
 from typing import Dict, List, Any
 from collections import defaultdict
+
+
+def extract_json_from_text(text: str) -> dict:
+    """从模型输出中提取JSON,支持多种格式"""
+    if not text:
+        return {}
+    
+    # 尝试直接解析
+    try:
+        return json.loads(text)
+    except:
+        pass
+    
+    # 尝试找到JSON块
+    patterns = [
+        r'```json\s*(.*?)\s*```',  # markdown json块
+        r'```\s*(.*?)\s*```',       # 普通代码块
+        r'\{[^{}]*"relations"[^{}]*\[.*?\]\s*\}',  # relations格式
+        r'\{.*\}',                  # 任意JSON对象
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.DOTALL)
+        for match in matches:
+            try:
+                return json.loads(match)
+            except:
+                continue
+    
+    return {}
+
+
+def normalize_entity_name(name: str) -> str:
+    """标准化实体名称用于匹配"""
+    if not name:
+        return ""
+    # 转小写，去除多余空格，去除特殊字符
+    normalized = name.lower().strip()
+    normalized = re.sub(r'\s+', ' ', normalized)
+    return normalized
 
 
 def evaluate_docred(predictions: List[Dict], golds: List[Dict]) -> Dict[str, float]:
@@ -11,36 +52,52 @@ def evaluate_docred(predictions: List[Dict], golds: List[Dict]) -> Dict[str, flo
     评估 DocRED 关系抽取
     
     Metrics: Precision, Recall, F1 for relation triplets
+    支持:
+    1. 实体名称模糊匹配(忽略大小写)
+    2. 从模型输出中智能提取JSON
+    3. 分别统计每个关系类型的性能
     """
     pred_relations = []
     gold_relations = []
     
+    # 按关系类型统计
+    relation_stats = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
+    
     for pred, gold in zip(predictions, golds):
         # 解析预测结果
         try:
-            pred_data = json.loads(pred.get("prediction", "{}"))
+            pred_text = pred.get("prediction", "")
+            pred_data = extract_json_from_text(pred_text)
             pred_rels = pred_data.get("relations", [])
-            pred_relations.extend([
-                (r.get("head", ""), r.get("relation", ""), r.get("tail", ""))
-                for r in pred_rels
-            ])
-        except:
+            
+            for r in pred_rels:
+                head = normalize_entity_name(r.get("head", ""))
+                tail = normalize_entity_name(r.get("tail", ""))
+                rel = r.get("relation", "").strip()
+                if head and tail and rel:
+                    pred_relations.append((head, rel, tail))
+        except Exception as e:
             pass
         
         # 解析金标准
         try:
-            gold_data = json.loads(gold) if isinstance(gold, str) else gold
-            gold_rels = gold_data if isinstance(gold_data, list) else gold_data.get("relations", [])
-            gold_relations.extend([
-                (r.get("head", ""), r.get("relation", ""), r.get("tail", ""))
-                for r in gold_rels
-            ])
-        except:
+            gold_text = gold.get("gold", gold) if isinstance(gold, dict) else gold
+            gold_data = json.loads(gold_text) if isinstance(gold_text, str) else gold_text
+            gold_rels = gold_data.get("relations", []) if isinstance(gold_data, dict) else []
+            
+            for r in gold_rels:
+                head = normalize_entity_name(r.get("head", ""))
+                tail = normalize_entity_name(r.get("tail", ""))
+                rel = r.get("relation", "").strip()
+                if head and tail and rel:
+                    gold_relations.append((head, rel, tail))
+        except Exception as e:
             pass
     
     pred_set = set(pred_relations)
     gold_set = set(gold_relations)
     
+    # 计算整体指标
     tp = len(pred_set & gold_set)
     fp = len(pred_set - gold_set)
     fn = len(gold_set - pred_set)
@@ -48,6 +105,23 @@ def evaluate_docred(predictions: List[Dict], golds: List[Dict]) -> Dict[str, flo
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    
+    # 按关系类型统计
+    for rel_tuple in pred_set & gold_set:
+        relation_stats[rel_tuple[1]]["tp"] += 1
+    for rel_tuple in pred_set - gold_set:
+        relation_stats[rel_tuple[1]]["fp"] += 1
+    for rel_tuple in gold_set - pred_set:
+        relation_stats[rel_tuple[1]]["fn"] += 1
+    
+    # 计算每个关系类型的F1
+    per_relation_f1 = {}
+    for rel, stats in relation_stats.items():
+        r_tp, r_fp, r_fn = stats["tp"], stats["fp"], stats["fn"]
+        r_prec = r_tp / (r_tp + r_fp) if (r_tp + r_fp) > 0 else 0.0
+        r_rec = r_tp / (r_tp + r_fn) if (r_tp + r_fn) > 0 else 0.0
+        r_f1 = 2 * r_prec * r_rec / (r_prec + r_rec) if (r_prec + r_rec) > 0 else 0.0
+        per_relation_f1[rel] = {"precision": r_prec, "recall": r_rec, "f1": r_f1}
     
     return {
         "precision": precision,
@@ -57,7 +131,10 @@ def evaluate_docred(predictions: List[Dict], golds: List[Dict]) -> Dict[str, flo
         "false_positives": fp,
         "false_negatives": fn,
         "pred_count": len(pred_set),
-        "gold_count": len(gold_set)
+        "gold_count": len(gold_set),
+        "per_relation": per_relation_f1,
+        "unique_relations_predicted": len(set(r[1] for r in pred_set)),
+        "unique_relations_gold": len(set(r[1] for r in gold_set)),
     }
 
 
