@@ -1,24 +1,36 @@
 """
-LoRA微调脚本 - 针对文档信息抽取任务微调Qwen-VL模型
+LoRA微调脚本 - 针对文档信息抽取任务微调Qwen模型
+
+**推荐训练模式**: direct (task-only)
+- 训练: LoRA学习 "文档内容 → 标准JSON输出"
+- 推理: 同一个LoRA可用于sequential、hierarchical或任何自定义LatentMAS模式
+- 原理: LatentMAS框架在推理时通过不同prompts调用LoRA模型构建多agent协作
+
+**高级模式**: latent_mas (agent-aware)  
+- 训练: LoRA学习完整的 "Planner→Critic→Refiner→Judger" 4-agent交互流程
+- 推理: 必须使用训练时相同的prompt_style
+- 适用场景: 希望将特定协作模式"烧"进模型权重
 
 使用方法:
+# 推荐: Task-only训练
 python finetune_lora.py \
     --model_name Qwen/Qwen3-VL-4B-Instruct \
     --task funsd \
     --train_data /data/funsd/instances_train.json \
-    --annotations_dir /data/funsd/annotations \
-    --image_dir /data/funsd/imgs \
     --output_dir ./lora_weights/funsd \
-    --epochs 3 \
-    --batch_size 4 \
-    --learning_rate 2e-4
+    --training_mode direct \
+    --epochs 3
+
+# 推理时可用于任何模式
+python run.py --method latent_mas --prompt sequential --lora_weights ./lora_weights/funsd
+python run.py --method latent_mas --prompt hierarchical --lora_weights ./lora_weights/funsd
 """
 
 import os
 import json
 import torch
 import argparse
-from typing import List, Dict
+from typing import List, Dict, Tuple
 from transformers import AutoModelForVision2Seq, AutoProcessor, TrainingArguments, Trainer
 from peft import LoraConfig, get_peft_model, TaskType
 from torch.utils.data import Dataset
@@ -26,13 +38,531 @@ from PIL import Image
 from data import load_funsd, load_docred, load_cord, load_finer
 
 
-class DocumentExtractionDataset(Dataset):
-    """文档信息抽取数据集"""
+# ============= Agent Prompts for LatentMAS Training =============
+
+def get_agent_prompts(task: str, question: str, entity_list: str = "", mode: str = "sequential") -> Dict[str, str]:
+    """
+    获取4个Agent的prompt模板
     
-    def __init__(self, data_items: List[Dict], processor, task: str):
+    Args:
+        task: 任务类型 (docred/funsd/cord/finer)
+        question: 文档内容
+        entity_list: 实体列表（DocRED专用）
+        mode: sequential(顺序协作) 或 hierarchical(并行分工)
+    """
+    
+    if mode == "hierarchical":
+        return get_agent_prompts_hierarchical(task, question, entity_list)
+    else:
+        return get_agent_prompts_sequential(task, question, entity_list)
+
+
+def get_agent_prompts_sequential(task: str, question: str, entity_list: str = "") -> Dict[str, str]:
+    """Sequential模式: Planner→Critic→Refiner→Judger 顺序协作"""
+    
+    if task == "docred":
+        planner = f"""You are a Document Scanner Agent (Phase 1: Information Discovery).
+
+Task: Document-level relation extraction.
+
+Document:
+{question}
+
+Entities in document:
+{entity_list}
+
+Instructions:
+- Carefully scan and identify all entity mentions
+- Note potential relationships between entities
+- Consider sentence indices as evidence
+- Store findings in latent format
+
+Begin scanning and record findings:"""
+
+        critic = f"""You are a Document Validator Agent (Phase 2: Cross-Verification).
+
+Task: Verify relation extraction accuracy.
+
+Document:
+{question}
+
+Instructions:
+- Cross-check entity relationships against document
+- Verify evidence sentence indices
+- Identify missing or incorrect relations
+- Note corrections in latent format
+
+Continue verification:"""
+
+        refiner = f"""You are a Document Structuring Agent (Phase 3: Organization).
+
+Task: Organize extracted relations.
+
+Instructions:
+- Consolidate verified relations
+- Resolve any conflicts
+- Prepare final extraction structure
+- Use Wikidata P-IDs for relations
+
+Continue organization:"""
+
+        judger = f"""Task: Output final relation extraction JSON.
+
+Entities: {entity_list}
+
+Common relations: P17(country), P131(located in), P27(citizenship), P569(birth date), P570(death date), P19(birthplace), P20(death place), P69(educated at), P108(employer), P40(child), P26(spouse).
+
+Output JSON format:
+{{"relations": [{{"head": "Entity", "relation": "P17", "tail": "Country", "evidence": [0]}}]}}
+
+Based on previous analysis, output ONLY the final JSON:"""
+
+    elif task == "funsd":
+        planner = f"""You are a Form Scanner Agent (Phase 1: Field Detection).
+
+Task: Form understanding and field extraction.
+
+Form content:
+{question}
+
+Instructions:
+- Identify all form fields and their types
+- Classify as: question/answer/header/other
+- Note spatial relationships
+- Store findings in latent format
+
+Begin scanning:"""
+
+        critic = f"""You are a Form Validator Agent (Phase 2: Link Verification).
+
+Task: Verify form field relationships.
+
+Instructions:
+- Cross-check question-answer pairings
+- Verify field classifications
+- Identify orphaned fields
+- Note corrections in latent format
+
+Continue verification:"""
+
+        refiner = f"""You are a Form Structuring Agent (Phase 3: Relationship Mapping).
+
+Task: Finalize form structure.
+
+Instructions:
+- Consolidate question-answer pairs
+- Confirm all field labels
+- Prepare final linking structure
+
+Continue organization:"""
+
+        judger = f"""Task: Output final form extraction JSON.
+
+Format:
+{{"entities": [{{"text": "...", "label": "question|answer|header|other"}}], "relations": [{{"head": "question text", "tail": "answer text"}}]}}
+
+Based on previous analysis, output ONLY the final JSON:"""
+
+    elif task == "cord":
+        planner = f"""You are a Receipt Scanner Agent (Phase 1: Item Detection).
+
+Task: Receipt/invoice information extraction.
+
+Receipt content:
+{question}
+
+Instructions:
+- Identify all menu items with prices
+- Note subtotal, tax, service charges
+- Locate total amount
+- Store findings in latent format
+
+Begin scanning:"""
+
+        critic = f"""You are a Receipt Validator Agent (Phase 2: Amount Verification).
+
+Task: Verify extracted amounts.
+
+Instructions:
+- Cross-check item prices and totals
+- Verify mathematical consistency
+- Identify missing amounts
+- Note corrections in latent format
+
+Continue verification:"""
+
+        refiner = f"""You are a Receipt Structuring Agent (Phase 3: Total Calculation).
+
+Task: Finalize receipt structure.
+
+Instructions:
+- Consolidate all items and amounts
+- Confirm total calculations
+- Prepare final structure
+
+Continue organization:"""
+
+        judger = f"""Task: Output final receipt extraction JSON.
+
+Format:
+{{"num_items": N, "subtotal_price": "X.XX", "service_price": "", "tax_price": "", "total_price": "X.XX", "etc": ""}}
+
+Based on previous analysis, output ONLY the final JSON:"""
+
+    elif task == "finer":
+        planner = f"""You are a Financial Entity Scanner (Phase 1: Entity Detection).
+
+Task: Financial named entity recognition.
+
+Text:
+{question}
+
+Entity types: PER, ORG, LOC, MONEY, DATE, PERCENT, STOCK, METRIC, PRODUCT, LAW
+
+Instructions:
+- Identify all financial entities
+- Note entity boundaries (start/end positions)
+- Classify entity types
+- Store findings in latent format
+
+Begin scanning:"""
+
+        critic = f"""You are a Financial Entity Validator (Phase 2: Type Verification).
+
+Task: Verify entity classifications.
+
+Instructions:
+- Cross-check entity type assignments
+- Verify character positions
+- Identify overlapping or missing entities
+- Note corrections in latent format
+
+Continue verification:"""
+
+        refiner = f"""You are a Financial Entity Structuring Agent (Phase 3: Position Mapping).
+
+Task: Finalize entity boundaries.
+
+Instructions:
+- Consolidate entity spans
+- Confirm type classifications
+- Calculate exact positions
+
+Continue organization:"""
+
+        judger = f"""Task: Output final entity extraction JSON.
+
+Format:
+{{"entities": [{{"text": "Apple", "type": "ORG", "start": 0, "end": 5}}]}}
+
+Based on previous analysis, output ONLY the final JSON:"""
+
+    else:
+        planner = f"Scan document:\n{question}"
+        critic = "Verify findings."
+        refiner = "Organize results."
+        judger = "Output final JSON:"
+    
+    return {
+        "planner": planner,
+        "critic": critic,
+        "refiner": refiner,
+        "judger": judger
+    }
+
+
+def get_agent_prompts_hierarchical(task: str, question: str, entity_list: str = "") -> Dict[str, str]:
+    """Hierarchical模式: 多个partition并行读取，最后汇总"""
+    
+    if task == "docred":
+        planner = f"""You are Document Partition Reader 1 (Focus: Entity Detection).
+
+Task: Document-level relation extraction.
+
+Document:
+{question}
+
+Instructions:
+- Extract entities and their mentions from first part
+- Note potential relationships
+- Store findings in latent format
+
+Partition 1 extraction:"""
+
+        critic = f"""You are Document Partition Reader 2 (Focus: Relation Verification).
+
+Task: Verify and extract relations from middle part.
+
+Document:
+{question}
+
+Instructions:
+- Cross-check relationships in middle section
+- Verify evidence sentences
+- Store findings in latent format
+
+Partition 2 extraction:"""
+
+        refiner = f"""You are Document Partition Reader 3 (Focus: Evidence Collection).
+
+Task: Extract evidence from final part.
+
+Document:
+{question}
+
+Instructions:
+- Identify supporting sentences
+- Confirm entity-relation mappings
+- Store findings in latent format
+
+Partition 3 extraction:"""
+
+        judger = f"""You are Integration Agent. Consolidate all partition findings.
+
+Entities: {entity_list}
+
+Common relations: P17(country), P131(located in), P27(citizenship), P569(birth date), P570(death date), P19(birthplace), P20(death place), P69(educated at), P108(employer), P40(child), P26(spouse).
+
+Output JSON format:
+{{"relations": [{{"head": "Entity", "relation": "P17", "tail": "Country", "evidence": [0]}}]}}
+
+Based on all partitions, output ONLY the final JSON:"""
+
+    elif task == "funsd":
+        planner = f"""You are Form Section Reader 1 (Focus: Header Fields).
+
+Task: Extract form headers and sections.
+
+Form content:
+{question}
+
+Instructions:
+- Identify header and section fields
+- Store findings in latent format
+
+Section 1 extraction:"""
+
+        critic = f"""You are Form Section Reader 2 (Focus: Question Fields).
+
+Task: Extract question labels.
+
+Instructions:
+- Identify all question/prompt fields
+- Store findings in latent format
+
+Section 2 extraction:"""
+
+        refiner = f"""You are Form Section Reader 3 (Focus: Answer Fields).
+
+Task: Extract answer values and link to questions.
+
+Instructions:
+- Identify answer fields
+- Match with corresponding questions
+- Store findings in latent format
+
+Section 3 extraction:"""
+
+        judger = f"""You are Integration Agent. Consolidate form structure.
+
+Format:
+{{"entities": [{{"text": "...", "label": "question|answer|header|other"}}], "relations": [{{"head": "question text", "tail": "answer text"}}]}}
+
+Based on all sections, output ONLY the final JSON:"""
+
+    elif task == "cord":
+        planner = f"""You are Receipt Section Reader 1 (Focus: Menu Items).
+
+Task: Extract menu items from receipt.
+
+Receipt content:
+{question}
+
+Instructions:
+- Identify all menu items and prices
+- Store findings in latent format
+
+Items extraction:"""
+
+        critic = f"""You are Receipt Section Reader 2 (Focus: Subtotals).
+
+Task: Extract subtotal and service charges.
+
+Instructions:
+- Identify subtotal amounts
+- Note service charges
+- Store findings in latent format
+
+Subtotals extraction:"""
+
+        refiner = f"""You are Receipt Section Reader 3 (Focus: Tax and Total).
+
+Task: Extract tax and total amount.
+
+Instructions:
+- Identify tax amount
+- Locate final total
+- Store findings in latent format
+
+Tax/Total extraction:"""
+
+        judger = f"""You are Integration Agent. Consolidate receipt data.
+
+Format:
+{{"num_items": N, "subtotal_price": "X.XX", "service_price": "", "tax_price": "", "total_price": "X.XX", "etc": ""}}
+
+Based on all sections, output ONLY the final JSON:"""
+
+    elif task == "finer":
+        planner = f"""You are Text Section Reader 1 (Focus: Organization Entities).
+
+Task: Extract ORG, LOC entities from first part.
+
+Text:
+{question}
+
+Entity types focus: ORG, LOC
+
+Instructions:
+- Identify organization and location entities
+- Note boundaries
+- Store findings in latent format
+
+Section 1 extraction:"""
+
+        critic = f"""You are Text Section Reader 2 (Focus: Financial Entities).
+
+Task: Extract MONEY, PERCENT, DATE entities from middle part.
+
+Entity types focus: MONEY, PERCENT, DATE
+
+Instructions:
+- Identify monetary amounts, percentages, dates
+- Note boundaries
+- Store findings in latent format
+
+Section 2 extraction:"""
+
+        refiner = f"""You are Text Section Reader 3 (Focus: Specialized Entities).
+
+Task: Extract PER, STOCK, METRIC entities from final part.
+
+Entity types focus: PER, STOCK, METRIC, PRODUCT, LAW
+
+Instructions:
+- Identify person names, stocks, metrics
+- Note boundaries
+- Store findings in latent format
+
+Section 3 extraction:"""
+
+        judger = f"""You are Integration Agent. Consolidate all entities.
+
+Format:
+{{"entities": [{{"text": "Apple", "type": "ORG", "start": 0, "end": 5}}]}}
+
+Based on all sections, output ONLY the final JSON:"""
+
+    else:
+        planner = f"Section 1:\n{question}"
+        critic = "Section 2 analysis."
+        refiner = "Section 3 analysis."
+        judger = "Output final JSON:"
+    
+    return {
+        "planner": planner,
+        "critic": critic,
+        "refiner": refiner,
+        "judger": judger
+    }
+
+
+def generate_agent_reasoning(task: str, gold: str, agent_role: str, mode: str = "sequential") -> str:
+    """生成每个agent的推理过程（用于训练）"""
+    
+    if mode == "hierarchical":
+        # Hierarchical模式: 每个agent处理不同partition
+        if agent_role == "planner":
+            return f"""Partition 1 analysis complete...
+
+Key findings from this section:
+- Extracted primary entities/fields
+- Noted key information
+- Stored in latent representation
+
+[Partition 1 latent state ready]"""
+
+        elif agent_role == "critic":
+            return f"""Partition 2 analysis complete...
+
+Key findings from this section:
+- Extracted secondary entities/fields
+- Cross-referenced with partition 1
+- Stored in latent representation
+
+[Partition 2 latent state ready]"""
+
+        elif agent_role == "refiner":
+            return f"""Partition 3 analysis complete...
+
+Key findings from this section:
+- Extracted remaining entities/fields
+- Verified consistency across partitions
+- Stored in latent representation
+
+[Partition 3 latent state ready]"""
+
+        elif agent_role == "judger":
+            return gold
+    
+    else:
+        # Sequential模式: 顺序协作
+        if agent_role == "planner":
+            return f"""Scanning document for relevant information...
+
+Key observations:
+- Identified main entities and relationships
+- Noted evidence locations
+- Stored initial findings in latent representation
+
+[Latent state updated with document scan results]"""
+
+        elif agent_role == "critic":
+            return f"""Verifying extracted information...
+
+Validation results:
+- Cross-checked entity references
+- Verified relationship accuracy
+- Identified areas needing refinement
+
+[Latent state updated with verification results]"""
+
+        elif agent_role == "refiner":
+            return f"""Organizing and refining structure...
+
+Refinement complete:
+- Consolidated all verified information
+- Resolved conflicts
+- Prepared final extraction format
+
+[Latent state finalized for output]"""
+
+        elif agent_role == "judger":
+            return gold
+    
+    return ""
+
+
+class LatentMASDataset(Dataset):
+    """支持4-Agent流程的训练数据集"""
+    
+    def __init__(self, data_items: List[Dict], processor, task: str, training_mode: str = "latent_mas", prompt_style: str = "sequential"):
         self.data_items = data_items
         self.processor = processor
         self.task = task
+        self.training_mode = training_mode
+        self.prompt_style = prompt_style  # sequential 或 hierarchical
+        self.agents = ["planner", "critic", "refiner", "judger"]
     
     def __len__(self):
         return len(self.data_items)
@@ -40,161 +570,111 @@ class DocumentExtractionDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data_items[idx]
         
-        # 构建输入消息
         question = item.get("question", "")
         gold = item.get("gold", "{}")
         image = item.get("image")
-        entity_list = item.get("entity_list", "")  # DocRED实体列表
+        entity_list = item.get("entity_list", "")
         
-        # 根据任务类型构建训练prompt（与推理时格式一致）
-        if self.task == "funsd":
-            instruction = """Task: Extract form fields and their semantic relationships.
-
-Identify form entities with these labels:
-- question: Field labels or prompts ("Name:", "Date of Birth:", "Address:")
-- answer: Filled-in values or responses
-- header: Section titles or form headers
-- other: Other text elements
-
-Identify relations:
-- Link questions to their corresponding answers
-- Use entity text for matching
-
-Output JSON format:
-{"entities": [{"text": "Name:", "label": "question"}, {"text": "John Smith", "label": "answer"}], "relations": [{"head": "Name:", "tail": "John Smith"}]}
-
-Example:
-Form text: "Employee Name: Sarah Johnson | Department: Engineering | Salary: $85,000"
-Output:
-{
-  "entities": [
-    {"text": "Employee Name:", "label": "question"},
-    {"text": "Sarah Johnson", "label": "answer"},
-    {"text": "Department:", "label": "question"},
-    {"text": "Engineering", "label": "answer"},
-    {"text": "Salary:", "label": "question"},
-    {"text": "$85,000", "label": "answer"}
-  ],
-  "relations": [
-    {"head": "Employee Name:", "tail": "Sarah Johnson"},
-    {"head": "Department:", "tail": "Engineering"},
-    {"head": "Salary:", "tail": "$85,000"}
-  ]
-}"""
+        system_msg = "You are Qwen, an expert document extraction assistant. Follow the multi-agent pipeline: scan → verify → organize → output."
         
-        elif self.task == "docred":
-            # DocRED: 包含实体列表 + 简化的关系提示
-            instruction = f"""Task: Document-level relation extraction.
-
-Entities in this document:
-{entity_list}
-
-Extract relations between entities using Wikidata property IDs.
-Common relations: P17(country), P131(located in), P27(citizenship), P569(birth date), P570(death date), P19(birthplace), P20(death place), P69(educated at), P108(employer), P102(political party), P40(child), P26(spouse), P22(father), P25(mother).
-
-Output JSON format:
-{{"relations": [{{"head": "Entity Name", "relation": "P17", "tail": "Country Name", "evidence": [0, 1]}}]}}
-
-Rules:
-1. head/tail must be entity names from the list above
-2. relation must be a valid P-ID
-3. evidence is list of sentence indices (0-based) that support this relation"""
-        
-        elif self.task == "cord":
-            instruction = """Task: Extract receipt/invoice information from OCR text.
-
-Extract these fields:
-1. num_items: Total number of items purchased (integer)
-2. subtotal_price: Price before tax/service charge (string with currency)
-3. service_price: Service charge amount (string)
-4. tax_price: Tax amount (string)
-5. total_price: Final total amount (string)
-6. etc: Additional charges or notes (string)
-
-Important:
-- Extract exact amounts as they appear (e.g., "$12.50", "25.00")
-- If a field is not present, use empty string ""
-- num_items should be an integer count
-
-Output JSON format:
-{"num_items": 3, "subtotal_price": "25.50", "service_price": "2.00", "tax_price": "2.48", "total_price": "29.98", "etc": ""}
-
-Example:
-Input: "Item1 $10.00\nItem2 $15.50\nSubtotal $25.50\nTax $2.48\nTotal $27.98"
-Output: {"num_items": 2, "subtotal_price": "25.50", "tax_price": "2.48", "total_price": "27.98", "service_price": "", "etc": ""}"""
-        
-        elif self.task == "finer":
-            instruction = """Task: Fine-grained financial named entity recognition.
-
-Identify and classify financial entities in text.
-
-Entity types:
-- PER: Person names (executives, analysts, investors)
-- ORG: Organizations (companies, banks, institutions)
-- LOC: Locations (countries, cities, regions)
-- MONEY: Monetary amounts ("$1M", "100 million dollars")
-- DATE: Dates and time periods ("Q3 2023", "March 15")
-- PERCENT: Percentage values ("5%", "15.5 percent")
-- STOCK: Stock tickers and symbols ("AAPL", "NASDAQ:MSFT")
-- METRIC: Financial metrics ("revenue", "profit margin", "EPS")
-- PRODUCT: Financial products ("bonds", "derivatives", "mortgage")
-- LAW: Financial regulations ("Dodd-Frank", "Basel III")
-
-Output JSON format:
-{"entities": [{"text": "Apple Inc.", "type": "ORG", "start": 0, "end": 10}, {"text": "$2.5B", "type": "MONEY", "start": 25, "end": 30}]}
-
-Rules:
-- start/end are character positions in original text (0-based)
-- text is the exact entity string
-- type must be one of the predefined types
-
-Example:
-Input: "Apple reported $95.3B revenue in Q1 2024, up 5%."
-Output: {"entities": [{"text": "Apple", "type": "ORG", "start": 0, "end": 5}, {"text": "$95.3B", "type": "MONEY", "start": 15, "end": 22}, {"text": "Q1 2024", "type": "DATE", "start": 34, "end": 41}, {"text": "5%", "type": "PERCENT", "start": 46, "end": 48}]}"""
+        if self.training_mode == "latent_mas":
+            # 完整4-Agent多轮对话
+            messages = self._build_latent_mas_messages(question, gold, entity_list, system_msg, image)
         else:
-            instruction = "Task: Extract information"
+            # 单轮直接推理 (fallback)
+            messages = self._build_direct_messages(question, gold, entity_list, system_msg, image)
         
-        # 构建消息格式（与推理时LoRA prompts一致）
-        system_msg = "You are an expert document information extraction system. Extract structured information accurately and output valid JSON only."
+        return self._process_messages(messages, image)
+    
+    def _build_latent_mas_messages(self, question: str, gold: str, entity_list: str, 
+                                    system_msg: str, image) -> List[Dict]:
+        """构建完整的4-Agent对话序列"""
+        
+        agent_prompts = get_agent_prompts(self.task, question, entity_list, mode=self.prompt_style)
+        
+        messages = [{"role": "system", "content": system_msg}]
+        
+        # Planner轮次 (可包含图像)
+        if image:
+            planner_content = [
+                {"type": "image", "image": image},
+                {"type": "text", "text": agent_prompts["planner"]}
+            ]
+        else:
+            planner_content = agent_prompts["planner"]
+        
+        messages.append({"role": "user", "content": planner_content})
+        messages.append({"role": "assistant", "content": generate_agent_reasoning(self.task, gold, "planner", mode=self.prompt_style)})
+        
+        # Critic轮次
+        messages.append({"role": "user", "content": agent_prompts["critic"]})
+        messages.append({"role": "assistant", "content": generate_agent_reasoning(self.task, gold, "critic", mode=self.prompt_style)})
+        
+        # Refiner轮次
+        messages.append({"role": "user", "content": agent_prompts["refiner"]})
+        messages.append({"role": "assistant", "content": generate_agent_reasoning(self.task, gold, "refiner", mode=self.prompt_style)})
+        
+        # Judger轮次 - 输出最终JSON
+        messages.append({"role": "user", "content": agent_prompts["judger"]})
+        messages.append({"role": "assistant", "content": gold})  # 最终答案
+        
+        return messages
+    
+    def _build_direct_messages(self, question: str, gold: str, entity_list: str,
+                                system_msg: str, image) -> List[Dict]:
+        """构建单轮直接推理对话"""
+        
+        # 使用原来的单轮prompt格式
+        instruction = self._get_direct_instruction(entity_list)
         
         if image:
             user_content = [
                 {"type": "image", "image": image},
                 {"type": "text", "text": f"{instruction}\n\nDocument text:\n{question}\n\nExtract and output JSON:"}
             ]
-            messages = [
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_content},
-                {"role": "assistant", "content": gold}
-            ]
         else:
-            messages = [
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": f"{instruction}\n\nDocument text:\n{question}\n\nExtract and output JSON:"},
-                {"role": "assistant", "content": gold}
-            ]
+            user_content = f"{instruction}\n\nDocument text:\n{question}\n\nExtract and output JSON:"
         
-        # 使用processor处理
+        return [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_content},
+            {"role": "assistant", "content": gold}
+        ]
+    
+    def _get_direct_instruction(self, entity_list: str) -> str:
+        """获取单轮推理的指令"""
+        if self.task == "docred":
+            return f"""Task: Document-level relation extraction.
+Entities: {entity_list}
+Output: {{"relations": [{{"head": "...", "relation": "P-ID", "tail": "...", "evidence": [0]}}]}}"""
+        elif self.task == "funsd":
+            return """Task: Form field extraction.
+Output: {"entities": [...], "relations": [...]}"""
+        elif self.task == "cord":
+            return """Task: Receipt extraction.
+Output: {"num_items": N, "subtotal_price": "...", "total_price": "..."}"""
+        elif self.task == "finer":
+            return """Task: Financial NER.
+Output: {"entities": [{"text": "...", "type": "...", "start": 0, "end": 5}]}"""
+        return "Extract information."
+    
+    def _process_messages(self, messages: List[Dict], image) -> Dict:
+        """处理消息并返回模型输入"""
+        
+        # 应用chat template
         if hasattr(self.processor, 'apply_chat_template'):
-            # Qwen系列模型支持chat template
             text = self.processor.apply_chat_template(messages, tokenize=False)
         else:
-            # Fallback：手动构建文本
-            text = ""
-            for msg in messages:
-                if isinstance(msg["content"], list):
-                    text += "\n".join([c["text"] for c in msg["content"] if c.get("type") == "text"])
-                else:
-                    text += msg["content"]
-                text += "\n"
+            text = self._manual_format_messages(messages)
         
+        # Tokenize
         if image:
             inputs = self.processor(
                 text=[text],
                 images=[image],
                 return_tensors="pt",
                 padding="max_length",
-                max_length=2048,
+                max_length=4096,  # 4-agent需要更长上下文
                 truncation=True
             )
         else:
@@ -202,19 +682,17 @@ Output: {"entities": [{"text": "Apple", "type": "ORG", "start": 0, "end": 5}, {"
                 text=[text],
                 return_tensors="pt",
                 padding="max_length",
-                max_length=2048,
+                max_length=4096,
                 truncation=True
             )
         
-        # 创建labels (mask掉input部分，只计算output的loss)
         input_ids = inputs["input_ids"].squeeze(0)
         attention_mask = inputs["attention_mask"].squeeze(0)
         
-        # 简单实现：所有tokens都参与训练
-        # 更好的实现：只计算assistant回复部分的loss
+        # 创建labels
         labels = input_ids.clone()
-        # 获取pad_token_id并mask掉padding部分
-        pad_token_id = self.processor.tokenizer.pad_token_id if hasattr(self.processor, 'tokenizer') else self.processor.pad_token_id
+        pad_token_id = getattr(self.processor, 'pad_token_id', None) or \
+                       getattr(self.processor.tokenizer, 'pad_token_id', 0)
         labels[labels == pad_token_id] = -100
         
         result = {
@@ -223,13 +701,27 @@ Output: {"entities": [{"text": "Apple", "type": "ORG", "start": 0, "end": 5}, {"
             "labels": labels,
         }
         
-        # 只有VL模型才有pixel_values
         if "pixel_values" in inputs:
             result["pixel_values"] = inputs["pixel_values"].squeeze(0)
         if "image_grid_thw" in inputs:
             result["image_grid_thw"] = inputs["image_grid_thw"].squeeze(0)
         
         return result
+    
+    def _manual_format_messages(self, messages: List[Dict]) -> str:
+        """手动格式化消息（fallback）"""
+        text_parts = []
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            if isinstance(content, list):
+                content = " ".join([c.get("text", "") for c in content if isinstance(c, dict)])
+            text_parts.append(f"<|{role}|>\n{content}")
+        return "\n".join(text_parts)
+
+
+# Backward compatibility: keep old class name
+DocumentExtractionDataset = LatentMASDataset
 
 
 def load_training_data(args):
@@ -288,7 +780,21 @@ def main():
     parser.add_argument("--lora_dropout", type=float, default=0.05)
     parser.add_argument("--max_train_samples", type=int, default=None, help="Maximum number of training samples (use all if not specified)")
     parser.add_argument("--use_vision_model", action="store_true", help="Use vision-language model (auto-detect if not specified)")
+    parser.add_argument("--training_mode", type=str, default="direct", choices=["latent_mas", "direct"],
+                       help="Training mode: 'direct' for task-only (recommended), 'latent_mas' for agent-aware")
+    parser.add_argument("--prompt_style", type=str, default="sequential", choices=["sequential", "hierarchical"],
+                       help="[Only for latent_mas mode] Prompt style: 'sequential' or 'hierarchical'")
     args = parser.parse_args()
+    
+    print(f"[Config] Training mode: {args.training_mode}")
+    if args.training_mode == "direct":
+        print("  → Task-only training: LoRA learns 'Document → JSON' mapping")
+        print("  → Can be used with ANY LatentMAS mode at inference (sequential/hierarchical)")
+        print("  → Recommended: More flexible, agent roles assigned at inference time")
+    else:
+        print(f"  → Agent-aware training: LoRA learns full 4-agent flow ({args.prompt_style} style)")
+        print(f"  → Must use same prompt style at inference")
+        print(f"  → Use case: When you want agents 'baked into' model weights")
     
     # 自动检测是否应该使用VL模型
     if not args.use_vision_model:
@@ -374,7 +880,7 @@ def main():
     else:
         print(f"Using all {len(train_data)} training samples")
     
-    train_dataset = DocumentExtractionDataset(train_data, processor, args.task)
+    train_dataset = LatentMASDataset(train_data, processor, args.task, training_mode=args.training_mode, prompt_style=args.prompt_style)
     
     # 检测GPU是否支持bf16
     use_bf16 = torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
