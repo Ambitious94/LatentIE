@@ -8,46 +8,141 @@ from collections import defaultdict
 
 
 def extract_json_from_text(text: str) -> dict:
-    """从模型输出中提取JSON,支持多种格式"""
-    if not text:
+    """介模型输出中提取JSON,支持多种格式"""
+    if not text or not isinstance(text, str):
         return {}
     
-    # 尝试直接解析
-    try:
-        return json.loads(text)
-    except:
-        pass
+    # 快速路径：尝试直接解析
+    text_stripped = text.strip()
+    if text_stripped.startswith('{') and text_stripped.endswith('}'):
+        try:
+            return json.loads(text_stripped)
+        except:
+            pass
     
-    # 尝试找到JSON块
+    # 尝试找到JSON块（从最具体到最宽泛）
     patterns = [
-        r'```json\s*(.*?)\s*```',  # markdown json块
-        r'```\s*(.*?)\s*```',       # 普通代码块
-        r'\{[^{}]*"relations"[^{}]*\[.*?\]\s*\}',  # relations格式
-        r'\{.*\}',                  # 任意JSON对象
+        r'```json\s*({.*?})\s*```',  # markdown json块
+        r'```\s*({.*?})\s*```',       # 普通代码块
+        r'({[^{}]*"relations"[^{}]*\[.*?\]\s*})',  # DocRED relations格式
+        r'({[^{}]*"entities"[^{}]*\[.*?\]\s*})',  # FUNSD/FinER entities格式
+        r'({[^{}]*"num_items"[^{}]*})',  # CORD格式
+        r'({.*?})',  # 任意JSON对象（最宽泛）
     ]
     
     for pattern in patterns:
-        matches = re.findall(pattern, text, re.DOTALL)
+        matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
         for match in matches:
             try:
-                return json.loads(match)
-            except:
+                parsed = json.loads(match)
+                # 验证是有效的字典
+                if isinstance(parsed, dict) and len(parsed) > 0:
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
                 continue
+    
+    # 最后尝试：移除前后非-JSON字符
+    try:
+        start = text.find('{')
+        end = text.rfind('}') + 1
+        if start != -1 and end > start:
+            json_str = text[start:end]
+            return json.loads(json_str)
+    except:
+        pass
     
     return {}
 
 
+# 缓存规范化结果以提高性能
+_normalize_cache = {}
+
 def normalize_entity_name(name: str) -> str:
-    """标准化实体名称用于匹配"""
+    """标准化实体名称用于匹配（带缓存）"""
     if not name:
         return ""
+    
+    # 检查缓存
+    if name in _normalize_cache:
+        return _normalize_cache[name]
+    
     # 转小写，去除多余空格，去除特殊字符
     normalized = name.lower().strip()
     normalized = re.sub(r'\s+', ' ', normalized)
+    # 去除常见标点符号
+    normalized = re.sub(r'[.,;:!?"\']', '', normalized)
+    
+    # 存入缓存（限制缓存大小）
+    if len(_normalize_cache) < 10000:
+        _normalize_cache[name] = normalized
+    
     return normalized
 
 
-def evaluate_docred(predictions: List[Dict], golds: List[Dict]) -> Dict[str, float]:
+def evaluate_docred(predictions: List[Dict], golds: List[Dict], verbose: bool = False) -> Dict[str, float]:
+    """
+    评估DocRED关系抽取结果
+    
+    Args:
+        predictions: 预测结果列表
+        golds: 标准答案列表
+        verbose: 是否输出详细信息
+    
+    Returns:
+        包含P/R/F1等指标的字典
+    """
+    if len(predictions) != len(golds):
+        print(f"[Warning] Length mismatch: {len(predictions)} predictions vs {len(golds)} golds")
+        min_len = min(len(predictions), len(golds))
+        predictions = predictions[:min_len]
+        golds = golds[:min_len]
+    
+    if len(predictions) == 0:
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0, "total_samples": 0}
+    
+    total_pred = 0
+    total_gold = 0
+    total_correct = 0
+    
+    # Per-relation统计
+    relation_stats = defaultdict(lambda: {"pred": 0, "gold": 0, "correct": 0})
+    
+    parse_errors = 0
+    empty_predictions = 0
+    
+    for idx, (pred_dict, gold_dict) in enumerate(zip(predictions, golds)):
+        try:
+            # 解析预测
+            if isinstance(pred_dict, dict) and "prediction" in pred_dict:
+                pred_text = pred_dict["prediction"]
+            elif isinstance(pred_dict, str):
+                pred_text = pred_dict
+            else:
+                pred_text = str(pred_dict)
+            
+            pred_json = extract_json_from_text(pred_text)
+            pred_relations = pred_json.get("relations", [])
+            
+            if not pred_relations:
+                empty_predictions += 1
+            
+            # 解析标准答案
+            if isinstance(gold_dict, dict) and "gold" in gold_dict:
+                gold_text = gold_dict["gold"]
+            elif isinstance(gold_dict, str):
+                gold_text = gold_dict
+            else:
+                gold_text = str(gold_dict)
+            
+            gold_json = extract_json_from_text(gold_text)
+            gold_relations = gold_json.get("relations", [])
+            
+        except Exception as e:
+            if verbose:
+                print(f"[Error] Sample {idx} parsing failed: {e}")
+            parse_errors += 1
+            continue
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0, "total_samples": 0}
     """
     评估 DocRED 关系抽取
     

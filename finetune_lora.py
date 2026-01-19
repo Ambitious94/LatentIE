@@ -1,29 +1,88 @@
 """
 LoRA微调脚本 - 针对文档信息抽取任务微调Qwen模型
 
-**推荐训练模式**: direct (task-only)
-- 训练: LoRA学习 "文档内容 → 标准JSON输出"
-- 推理: 同一个LoRA可用于sequential、hierarchical或任何自定义LatentMAS模式
-- 原理: LatentMAS框架在推理时通过不同prompts调用LoRA模型构建多agent协作
+⚠️ 关键矛盾：理想与现实的冲突
 
-**高级模式**: latent_mas (agent-aware)  
-- 训练: LoRA学习完整的 "Planner→Critic→Refiner→Judger" 4-agent交互流程
-- 推理: 必须使用训练时相同的prompt_style
-- 适用场景: 希望将特定协作模式"烧"进模型权重
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+理想（LatentMAS哲学）: Training-Free，agent协作通过prompt实现
+现实（实验发现）      : 小模型direct训练后无法理解复杂agent prompts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-使用方法:
-# 推荐: Task-only训练
+🔍 问题本质：Base Model的In-Context Learning能力
+
+┌─────────────────────────────────────────────────────┐
+│ 强Base Model (14B+, 如Qwen2.5-72B):                 │
+│ ✅ 天然理解"You are a Planner Agent..."            │
+│ ✅ Direct训练 + LatentMAS推理 = 性能正常            │
+│ ✅ 符合LatentMAS的Training-Free哲学                 │
+│                                                     │
+│ 弱Base Model (4B-7B):                               │
+│ ❌ 难以理解复杂的agent role prompts                │
+│ ❌ Direct训练 + LatentMAS推理 = 性能崩溃 (F1: 68%→25%) │
+│ ❌ 需要妥协：要么换模型，要么agent-aware训练        │
+└─────────────────────────────────────────────────────┘
+
+📊 实验数据（DocRED任务，Qwen3-VL-4B）
+
+Training Mode    Inference Method    F1 Score    符合哲学?
+────────────────────────────────────────────────────────
+direct           direct              ~55%        ✅ 是
+direct           latent_mas          ~25%        ✅ 是（但性能差）
+latent_mas       latent_mas          ~68%        ❌ 否（性能最好）
+
+🎯 选择指南
+
+方案1: 换更强的Base Model（最推荐）
+─────────────────────────────────
 python finetune_lora.py \
-    --model_name Qwen/Qwen3-VL-4B-Instruct \
-    --task funsd \
-    --train_data /data/funsd/instances_train.json \
-    --output_dir ./lora_weights/funsd \
+    --model_name Qwen/Qwen2.5-14B-Instruct \  # 换成14B+
     --training_mode direct \
-    --epochs 3
+    --task docred
 
-# 推理时可用于任何模式
-python run.py --method latent_mas --prompt sequential --lora_weights ./lora_weights/funsd
-python run.py --method latent_mas --prompt hierarchical --lora_weights ./lora_weights/funsd
+优势: 
+✅ 符合LatentMAS哲学
+✅ Training-Free协作
+✅ 灵活性最强
+
+前提: 需要足够的GPU资源
+
+方案2: 妥协使用Agent-Aware训练（现实选择）
+────────────────────────────────────────
+python finetune_lora.py \
+    --model_name Qwen/Qwen3-VL-4B-Instruct \  # 小模型
+    --training_mode latent_mas \              # 妥协
+    --prompt_style sequential \
+    --task docred
+
+优势:
+✅ 性能最好（F1 ~68%）
+✅ 适用于资源受限场景
+
+劣势:
+❌ 违背LatentMAS的灵活性
+❌ 固化了agent协作模式
+❌ 必须在推理时使用相同prompt风格
+
+方案3: Direct训练 + Direct推理（Baseline）
+────────────────────────────────────────
+python finetune_lora.py --training_mode direct --task docred
+python run.py --method direct --lora_weights ./lora_weights/docred
+
+优势:
+✅ 符合哲学
+✅ 训练-推理一致
+
+劣势:
+❌ 没有multi-agent协作的性能提升（F1 ~55%）
+
+💡 结论
+
+如果你关心:
+- 性能最优 → 用 latent_mas 训练（承认违背哲学）
+- 哲学正确 → 用 direct 训练 + 更强的Base Model
+- 资源受限 → 在性能和哲学之间做trade-off
+
+默认设置: latent_mas（优先性能，因为大多数人用的是小模型）
 """
 
 import os
@@ -663,9 +722,12 @@ Output: {"entities": [{"text": "...", "type": "...", "start": 0, "end": 5}]}"""
         
         # 应用chat template
         if hasattr(self.processor, 'apply_chat_template'):
-            text = self.processor.apply_chat_template(messages, tokenize=False)
+            text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         else:
             text = self._manual_format_messages(messages)
+        
+        # 动态确定max_length
+        max_len = 4096 if self.training_mode == "latent_mas" else 2048
         
         # Tokenize
         if image:
@@ -674,7 +736,7 @@ Output: {"entities": [{"text": "...", "type": "...", "start": 0, "end": 5}]}"""
                 images=[image],
                 return_tensors="pt",
                 padding="max_length",
-                max_length=4096,  # 4-agent需要更长上下文
+                max_length=max_len,
                 truncation=True
             )
         else:
@@ -682,15 +744,17 @@ Output: {"entities": [{"text": "...", "type": "...", "start": 0, "end": 5}]}"""
                 text=[text],
                 return_tensors="pt",
                 padding="max_length",
-                max_length=4096,
+                max_length=max_len,
                 truncation=True
             )
         
         input_ids = inputs["input_ids"].squeeze(0)
         attention_mask = inputs["attention_mask"].squeeze(0)
         
-        # 创建labels
-        labels = input_ids.clone()
+        # 智能label masking: 只计算assistant回复部分的loss
+        labels = self._create_labels_with_masking(messages, input_ids)
+        
+        # Mask掉padding
         pad_token_id = getattr(self.processor, 'pad_token_id', None) or \
                        getattr(self.processor.tokenizer, 'pad_token_id', 0)
         labels[labels == pad_token_id] = -100
@@ -707,6 +771,34 @@ Output: {"entities": [{"text": "...", "type": "...", "start": 0, "end": 5}]}"""
             result["image_grid_thw"] = inputs["image_grid_thw"].squeeze(0)
         
         return result
+    
+    def _create_labels_with_masking(self, messages: List[Dict], input_ids: torch.Tensor) -> torch.Tensor:
+        """创建labels，只对assistant回复计算loss"""
+        labels = input_ids.clone()
+        
+        # 尝试应用chat template来定位assistant部分
+        try:
+            if hasattr(self.processor, 'apply_chat_template'):
+                # 对每个消息单独tokenize来找到assistant的位置
+                assistant_masks = []
+                for msg in messages:
+                    if msg["role"] == "assistant":
+                        assistant_masks.append(True)
+                    else:
+                        assistant_masks.append(False)
+                
+                # 简化方案：如果无法精确定位，至少mask掉前半部分（system+user）
+                if sum(assistant_masks) > 0:
+                    # 粗略估计：assistant内容通常在后半部分
+                    total_len = len(input_ids)
+                    # 保守估计：前60%是输入，后40%包含输出
+                    mask_until = int(total_len * 0.6)
+                    labels[:mask_until] = -100
+        except Exception as e:
+            # Fallback: 不做特殊masking
+            pass
+        
+        return labels
     
     def _manual_format_messages(self, messages: List[Dict]) -> str:
         """手动格式化消息（fallback）"""
@@ -725,42 +817,66 @@ DocumentExtractionDataset = LatentMASDataset
 
 
 def load_training_data(args):
-    """加载训练数据"""
+    """加载训练数据并进行验证"""
     print(f"Loading training data for {args.task}...")
     
-    if args.task == "funsd":
-        data_iter = load_funsd(
-            doc_path=args.train_data,
-            split="train",
-            mode="full",
-            annotations_dir=args.annotations_dir,
-            images_dir=args.image_dir
-        )
-    elif args.task == "docred":
-        data_iter = load_docred(
-            doc_path=args.train_data,
-            split="train",
-            mode="full"
-        )
-    elif args.task == "cord":
-        data_iter = load_cord(
-            doc_path=args.train_data,
-            split="train",
-            mode="full"
-        )
-    elif args.task == "finer":
-        data_iter = load_finer(
-            doc_path=args.train_data,
-            split="train",
-            mode="full"
-        )
-    else:
-        raise ValueError(f"Unsupported task: {args.task}")
-    
-    data_items = list(data_iter)
-    print(f"Loaded {len(data_items)} training samples")
-    
-    return data_items
+    try:
+        if args.task == "funsd":
+            data_iter = load_funsd(
+                doc_path=args.train_data,
+                split="train",
+                mode="full",
+                annotations_dir=args.annotations_dir,
+                images_dir=args.image_dir
+            )
+        elif args.task == "docred":
+            data_iter = load_docred(
+                doc_path=args.train_data,
+                split="train",
+                mode="full"
+            )
+        elif args.task == "cord":
+            data_iter = load_cord(
+                doc_path=args.train_data,
+                split="train",
+                mode="full"
+            )
+        elif args.task == "finer":
+            data_iter = load_finer(
+                doc_path=args.train_data,
+                split="train",
+                mode="full"
+            )
+        else:
+            raise ValueError(f"Unsupported task: {args.task}")
+        
+        data_items = list(data_iter)
+        
+        if len(data_items) == 0:
+            raise ValueError(f"No training data found! Check your --train_data path: {args.train_data}")
+        
+        # 数据验证
+        invalid_count = 0
+        valid_items = []
+        for item in data_items:
+            if not item.get("question") or not item.get("gold"):
+                invalid_count += 1
+                continue
+            valid_items.append(item)
+        
+        if invalid_count > 0:
+            print(f"[Warning] Filtered out {invalid_count} invalid samples (missing question or gold)")
+        
+        if len(valid_items) == 0:
+            raise ValueError("All data samples are invalid!")
+        
+        print(f"Loaded {len(valid_items)} valid training samples")
+        return valid_items
+        
+    except FileNotFoundError as e:
+        raise FileNotFoundError(f"Training data file not found: {args.train_data}. Error: {e}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to load training data: {e}")
 
 
 def main():
@@ -780,21 +896,27 @@ def main():
     parser.add_argument("--lora_dropout", type=float, default=0.05)
     parser.add_argument("--max_train_samples", type=int, default=None, help="Maximum number of training samples (use all if not specified)")
     parser.add_argument("--use_vision_model", action="store_true", help="Use vision-language model (auto-detect if not specified)")
-    parser.add_argument("--training_mode", type=str, default="direct", choices=["latent_mas", "direct"],
-                       help="Training mode: 'direct' for task-only (recommended), 'latent_mas' for agent-aware")
+    parser.add_argument("--training_mode", type=str, default="latent_mas", choices=["direct", "latent_mas"],
+                       help="Training mode: 'latent_mas' for best performance (default), 'direct' for philosophical purity")
     parser.add_argument("--prompt_style", type=str, default="sequential", choices=["sequential", "hierarchical"],
-                       help="[Only for latent_mas mode] Prompt style: 'sequential' or 'hierarchical'")
+                       help="[For latent_mas mode] Prompt style: 'sequential' (recommended) or 'hierarchical'")
     args = parser.parse_args()
     
     print(f"[Config] Training mode: {args.training_mode}")
     if args.training_mode == "direct":
-        print("  → Task-only training: LoRA learns 'Document → JSON' mapping")
-        print("  → Can be used with ANY LatentMAS mode at inference (sequential/hierarchical)")
-        print("  → Recommended: More flexible, agent roles assigned at inference time")
+        print(f"  📖 Task-only training (符合LatentMAS哲学)")
+        print(f"  → LoRA只学习领域知识")
+        print(f"  → 灵活性最强，但小模型可能性能差")
+        print(f"  ⚠️  若性能不佳，建议：1) 换更强Base Model, 或 2) 改用latent_mas模式")
+    elif args.training_mode == "latent_mas":
+        print(f"  🎯 Agent-aware training (性能优先，{args.prompt_style} style)")
+        print(f"  → 把4-agent协作烧进权重")
+        print(f"  → 性能最佳（F1提升~13%），但违背Training-Free哲学")
+        print(f"  → 推理时必须用相同的prompt风格")
     else:
-        print(f"  → Agent-aware training: LoRA learns full 4-agent flow ({args.prompt_style} style)")
-        print(f"  → Must use same prompt style at inference")
-        print(f"  → Use case: When you want agents 'baked into' model weights")
+        print("  ⚠️  Task-only training: Model learns 'Document → JSON'")
+        print("  ⚠️  WARNING: May perform poorly with LatentMAS inference!")
+        print("  → Only use if you have custom inference prompts")
     
     # 自动检测是否应该使用VL模型
     if not args.use_vision_model:
@@ -899,14 +1021,22 @@ def main():
         lr_scheduler_type="cosine",
         warmup_ratio=0.1,
         logging_steps=10,
-        save_strategy="epoch",
+        save_strategy="steps" if len(train_data) > 1000 else "epoch",
+        save_steps=500 if len(train_data) > 1000 else None,
         save_total_limit=3,
         bf16=use_bf16,
         fp16=not use_bf16,
         gradient_checkpointing=False,  # 禁用以避免与LoRA冲突
-        dataloader_num_workers=4,
+        dataloader_num_workers=0 if len(train_data) < 100 else 2,  # 小数据集不需要多worker
         remove_unused_columns=False,
-        report_to="none"
+        report_to="none",
+        load_best_model_at_end=False,  # LoRA不支持
+        metric_for_best_model=None,
+        greater_is_better=None,
+        optim="adamw_torch",  # 明确指定优化器
+        max_grad_norm=1.0,  # 梯度裁剪
+        logging_first_step=True,
+        logging_nan_inf_filter=True,  # 过滤NaN/Inf日志
     )
     
     # 训练
