@@ -726,27 +726,28 @@ Output: {"entities": [{"text": "...", "type": "...", "start": 0, "end": 5}]}"""
         else:
             text = self._manual_format_messages(messages)
         
-        # 动态确定max_length
+        # 动态确定max_length（latent_mas需要更长的序列）
         max_len = 4096 if self.training_mode == "latent_mas" else 2048
         
-        # Tokenize
+        # Tokenize（统一处理，减少重复代码）
+        processor_kwargs = {
+            "text": [text],
+            "return_tensors": "pt",
+            "padding": "max_length",
+            "max_length": max_len,
+            "truncation": True
+        }
+        
         if image:
-            inputs = self.processor(
-                text=[text],
-                images=[image],
-                return_tensors="pt",
-                padding="max_length",
-                max_length=max_len,
-                truncation=True
-            )
-        else:
-            inputs = self.processor(
-                text=[text],
-                return_tensors="pt",
-                padding="max_length",
-                max_length=max_len,
-                truncation=True
-            )
+            processor_kwargs["images"] = [image]
+        
+        try:
+            inputs = self.processor(**processor_kwargs)
+        except Exception as e:
+            print(f"Warning: Processor failed with error: {e}")
+            # Fallback: 不使用图像
+            processor_kwargs.pop("images", None)
+            inputs = self.processor(**processor_kwargs)
         
         input_ids = inputs["input_ids"].squeeze(0)
         attention_mask = inputs["attention_mask"].squeeze(0)
@@ -754,10 +755,11 @@ Output: {"entities": [{"text": "...", "type": "...", "start": 0, "end": 5}]}"""
         # 智能label masking: 只计算assistant回复部分的loss
         labels = self._create_labels_with_masking(messages, input_ids)
         
-        # Mask掉padding
+        # Mask掉padding tokens
         pad_token_id = getattr(self.processor, 'pad_token_id', None) or \
-                       getattr(self.processor.tokenizer, 'pad_token_id', 0)
-        labels[labels == pad_token_id] = -100
+                       getattr(getattr(self.processor, 'tokenizer', None), 'pad_token_id', 0)
+        if pad_token_id is not None:
+            labels[labels == pad_token_id] = -100
         
         result = {
             "input_ids": input_ids,
@@ -765,6 +767,7 @@ Output: {"entities": [{"text": "...", "type": "...", "start": 0, "end": 5}]}"""
             "labels": labels,
         }
         
+        # 添加视觉相关的字段（如果存在）
         if "pixel_values" in inputs:
             result["pixel_values"] = inputs["pixel_values"].squeeze(0)
         if "image_grid_thw" in inputs:
@@ -773,30 +776,79 @@ Output: {"entities": [{"text": "...", "type": "...", "start": 0, "end": 5}]}"""
         return result
     
     def _create_labels_with_masking(self, messages: List[Dict], input_ids: torch.Tensor) -> torch.Tensor:
-        """创建labels，只对assistant回复计算loss"""
+        """创建labels，只对assistant回复计算loss
+        
+        使用简单稳定的方案：通过特殊token定位或比例估计
+        """
         labels = input_ids.clone()
         
-        # 尝试应用chat template来定位assistant部分
         try:
-            if hasattr(self.processor, 'apply_chat_template'):
-                # 对每个消息单独tokenize来找到assistant的位置
-                assistant_masks = []
-                for msg in messages:
-                    if msg["role"] == "assistant":
-                        assistant_masks.append(True)
-                    else:
-                        assistant_masks.append(False)
+            # 获取tokenizer
+            tokenizer = getattr(self.processor, 'tokenizer', self.processor)
+            
+            # 尝试找到assistant response的特殊token
+            # Qwen模型通常使用 <|im_start|>assistant 和 <|im_end|>
+            assistant_start_tokens = []
+            assistant_end_tokens = []
+            
+            try:
+                if hasattr(tokenizer, 'encode'):
+                    assistant_start_tokens = tokenizer.encode("<|im_start|>assistant", add_special_tokens=False)
+                    assistant_end_tokens = tokenizer.encode("<|im_end|>", add_special_tokens=False)
+            except:
+                pass
+            
+            # 如果找到了特殊token，使用精确匹配
+            if assistant_start_tokens:
+                input_ids_list = input_ids.tolist()
+                labels[:] = -100  # 先全部mask
+                i = 0
                 
-                # 简化方案：如果无法精确定位，至少mask掉前半部分（system+user）
-                if sum(assistant_masks) > 0:
-                    # 粗略估计：assistant内容通常在后半部分
-                    total_len = len(input_ids)
-                    # 保守估计：前60%是输入，后40%包含输出
-                    mask_until = int(total_len * 0.6)
-                    labels[:mask_until] = -100
+                while i < len(input_ids_list):
+                    # 查找assistant开始标记
+                    found = False
+                    for j in range(i, min(i + 50, len(input_ids_list))):
+                        if input_ids_list[j:j+len(assistant_start_tokens)] == assistant_start_tokens:
+                            # 找到assistant开始
+                            start_idx = j + len(assistant_start_tokens)
+                            
+                            # 查找对应的结束标记
+                            for k in range(start_idx, min(start_idx + 500, len(input_ids_list))):
+                                if input_ids_list[k:k+len(assistant_end_tokens)] == assistant_end_tokens:
+                                    # 找到assistant内容区域：[start_idx, k)
+                                    labels[start_idx:k] = input_ids[start_idx:k]
+                                    i = k + len(assistant_end_tokens)
+                                    found = True
+                                    break
+                            
+                            if not found:
+                                # 没找到结束标记，保留到末尾
+                                labels[start_idx:] = input_ids[start_idx:]
+                                break
+                            break
+                    
+                    if not found:
+                        i += 1
+            else:
+                # Fallback: 使用简单的比例估计（稳定方案）
+                total_len = len(input_ids)
+                
+                # 根据训练模式调整mask比例
+                if self.training_mode == "latent_mas":
+                    # 多轮对话：估计前面有更多输入
+                    mask_ratio = 0.5
+                else:
+                    # 单轮对话：输入较少
+                    mask_ratio = 0.4
+                
+                mask_until = int(total_len * mask_ratio)
+                labels[:mask_until] = -100
+        
         except Exception as e:
-            # Fallback: 不做特殊masking
-            pass
+            # 最终fallback: 简单稳定的方案
+            total_len = len(input_ids)
+            mask_until = int(total_len * 0.5)
+            labels[:mask_until] = -100
         
         return labels
     
@@ -903,20 +955,6 @@ def main():
     args = parser.parse_args()
     
     print(f"[Config] Training mode: {args.training_mode}")
-    if args.training_mode == "direct":
-        print(f"  📖 Task-only training (符合LatentMAS哲学)")
-        print(f"  → LoRA只学习领域知识")
-        print(f"  → 灵活性最强，但小模型可能性能差")
-        print(f"  ⚠️  若性能不佳，建议：1) 换更强Base Model, 或 2) 改用latent_mas模式")
-    elif args.training_mode == "latent_mas":
-        print(f"  🎯 Agent-aware training (性能优先，{args.prompt_style} style)")
-        print(f"  → 把4-agent协作烧进权重")
-        print(f"  → 性能最佳（F1提升~13%），但违背Training-Free哲学")
-        print(f"  → 推理时必须用相同的prompt风格")
-    else:
-        print("  ⚠️  Task-only training: Model learns 'Document → JSON'")
-        print("  ⚠️  WARNING: May perform poorly with LatentMAS inference!")
-        print("  → Only use if you have custom inference prompts")
     
     # 自动检测是否应该使用VL模型
     if not args.use_vision_model:
@@ -987,9 +1025,18 @@ def main():
     
     # 确保模型在训练模式并启用梯度
     model.train()
+    lora_param_count = 0
     for name, param in model.named_parameters():
         if 'lora' in name.lower():
             param.requires_grad = True
+            lora_param_count += param.numel()
+    
+    print(f"LoRA trainable parameters: {lora_param_count:,} ({lora_param_count / 1e6:.2f}M)")
+    
+    # 清理GPU缓存
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        print(f"GPU memory before training: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
     
     # 加载数据
     train_data = load_training_data(args)
@@ -1039,23 +1086,87 @@ def main():
         logging_nan_inf_filter=True,  # 过滤NaN/Inf日志
     )
     
+    # 自定义data collator
+    def smart_collate_fn(batch):
+        """智能批处理，处理不同维度和可选字段"""
+        if not batch:
+            return {}
+        
+        collated = {}
+        for key in batch[0].keys():
+            values = [item[key] for item in batch if key in item and item[key] is not None]
+            
+            if not values:
+                continue
+            
+            try:
+                # 尝试stack（适用于相同shape的tensor）
+                if isinstance(values[0], torch.Tensor):
+                    if all(v.shape == values[0].shape for v in values):
+                        collated[key] = torch.stack(values)
+                    else:
+                        # 不同shape，使用padding
+                        collated[key] = torch.nn.utils.rnn.pad_sequence(
+                            values, batch_first=True, padding_value=0
+                        )
+                else:
+                    collated[key] = values
+            except Exception as e:
+                print(f"Warning: Failed to collate key '{key}': {e}")
+                continue
+        
+        return collated
+    
     # 训练
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        data_collator=lambda x: {k: torch.stack([d[k] for d in x if d[k] is not None]) if x[0][k] is not None else None for k in x[0].keys()}
+        data_collator=smart_collate_fn
     )
     
+    print("\n" + "="*60)
     print("Starting training...")
-    trainer.train()
+    print(f"Total samples: {len(train_dataset)}")
+    print(f"Effective batch size: {args.batch_size * args.gradient_accumulation_steps}")
+    print(f"Total steps: ~{len(train_dataset) // (args.batch_size * args.gradient_accumulation_steps) * args.epochs}")
+    print("="*60 + "\n")
+    
+    try:
+        trainer.train()
+    except Exception as e:
+        print(f"\n❌ Training failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # 保存当前模型状态（即使失败）
+        try:
+            emergency_dir = args.output_dir + "_emergency"
+            print(f"\nAttempting to save emergency checkpoint to {emergency_dir}...")
+            model.save_pretrained(emergency_dir)
+            processor.save_pretrained(emergency_dir)
+            print("Emergency checkpoint saved.")
+        except:
+            print("Failed to save emergency checkpoint.")
+        
+        raise
     
     # 保存
+    print(f"\n{'='*60}")
     print(f"Saving LoRA weights to {args.output_dir}")
-    model.save_pretrained(args.output_dir)
-    processor.save_pretrained(args.output_dir)
+    try:
+        model.save_pretrained(args.output_dir)
+        processor.save_pretrained(args.output_dir)
+        print("✅ LoRA weights saved successfully!")
+    except Exception as e:
+        print(f"❌ Failed to save LoRA weights: {e}")
+        raise
     
-    print("Training completed!")
+    print(f"{'='*60}")
+    print("🎉 Training completed successfully!")
+    print(f"\nTo use the trained LoRA:")
+    print(f"  python run.py --method latent_mas --lora_weights {args.output_dir} --task {args.task}")
+    print(f"{'='*60}\n")
 
 
 if __name__ == "__main__":
