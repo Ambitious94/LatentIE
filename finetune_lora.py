@@ -778,20 +778,17 @@ Output: {"entities": [{"text": "...", "type": "...", "start": 0, "end": 5}]}"""
     def _create_labels_with_masking(self, messages: List[Dict], input_ids: torch.Tensor) -> torch.Tensor:
         """创建labels，只对assistant回复计算loss
         
-        使用最简单稳定的方案：固定比例masking
+        保守策略：只mask system prompt，保留所有对话内容
         """
         labels = input_ids.clone()
         
-        # 简单稳定的方案：按固定比例mask
+        # 保守策略：只mask前面很小一部分（system prompt和第一个user开头）
+        # 这样可以保留所有assistant的回复用于训练
         total_len = len(input_ids)
         
-        if self.training_mode == "latent_mas":
-            # 多轮对话：前50%是输入
-            mask_until = int(total_len * 0.5)
-        else:
-            # 单轮对话：前30%是输入
-            mask_until = int(total_len * 0.3)
-        
+        # 只mask前20%（通常只包含system prompt和第一个user的开头）
+        # 这样可以确保所有assistant回复都参与训练
+        mask_until = int(total_len * 0.2)
         labels[:mask_until] = -100
         
         return labels
@@ -1030,9 +1027,9 @@ def main():
         logging_nan_inf_filter=True,  # 过滤NaN/Inf日志
     )
     
-    # 自定义data collator
-    def smart_collate_fn(batch):
-        """智能批处理，处理不同维度和可选字段"""
+    # 简单稳定的data collator
+    def collate_fn(batch):
+        """简单的批处理：只stack相同shape的tensor"""
         if not batch:
             return {}
         
@@ -1043,21 +1040,15 @@ def main():
             if not values:
                 continue
             
-            try:
-                # 尝试stack（适用于相同shape的tensor）
-                if isinstance(values[0], torch.Tensor):
-                    if all(v.shape == values[0].shape for v in values):
-                        collated[key] = torch.stack(values)
-                    else:
-                        # 不同shape，使用padding
-                        collated[key] = torch.nn.utils.rnn.pad_sequence(
-                            values, batch_first=True, padding_value=0
-                        )
+            # 只处理tensor，且必须shape完全相同
+            if isinstance(values[0], torch.Tensor):
+                if all(v.shape == values[0].shape for v in values):
+                    collated[key] = torch.stack(values)
                 else:
-                    collated[key] = values
-            except Exception as e:
-                print(f"Warning: Failed to collate key '{key}': {e}")
-                continue
+                    # shape不同，跳过（让Trainer自动处理）
+                    pass
+            else:
+                collated[key] = values
         
         return collated
     
@@ -1066,7 +1057,7 @@ def main():
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        data_collator=smart_collate_fn
+        data_collator=collate_fn
     )
     
     print("\n" + "="*60)
