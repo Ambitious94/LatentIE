@@ -778,77 +778,21 @@ Output: {"entities": [{"text": "...", "type": "...", "start": 0, "end": 5}]}"""
     def _create_labels_with_masking(self, messages: List[Dict], input_ids: torch.Tensor) -> torch.Tensor:
         """创建labels，只对assistant回复计算loss
         
-        使用简单稳定的方案：通过特殊token定位或比例估计
+        使用最简单稳定的方案：固定比例masking
         """
         labels = input_ids.clone()
         
-        try:
-            # 获取tokenizer
-            tokenizer = getattr(self.processor, 'tokenizer', self.processor)
-            
-            # 尝试找到assistant response的特殊token
-            # Qwen模型通常使用 <|im_start|>assistant 和 <|im_end|>
-            assistant_start_tokens = []
-            assistant_end_tokens = []
-            
-            try:
-                if hasattr(tokenizer, 'encode'):
-                    assistant_start_tokens = tokenizer.encode("<|im_start|>assistant", add_special_tokens=False)
-                    assistant_end_tokens = tokenizer.encode("<|im_end|>", add_special_tokens=False)
-            except:
-                pass
-            
-            # 如果找到了特殊token，使用精确匹配
-            if assistant_start_tokens:
-                input_ids_list = input_ids.tolist()
-                labels[:] = -100  # 先全部mask
-                i = 0
-                
-                while i < len(input_ids_list):
-                    # 查找assistant开始标记
-                    found = False
-                    for j in range(i, min(i + 50, len(input_ids_list))):
-                        if input_ids_list[j:j+len(assistant_start_tokens)] == assistant_start_tokens:
-                            # 找到assistant开始
-                            start_idx = j + len(assistant_start_tokens)
-                            
-                            # 查找对应的结束标记
-                            for k in range(start_idx, min(start_idx + 500, len(input_ids_list))):
-                                if input_ids_list[k:k+len(assistant_end_tokens)] == assistant_end_tokens:
-                                    # 找到assistant内容区域：[start_idx, k)
-                                    labels[start_idx:k] = input_ids[start_idx:k]
-                                    i = k + len(assistant_end_tokens)
-                                    found = True
-                                    break
-                            
-                            if not found:
-                                # 没找到结束标记，保留到末尾
-                                labels[start_idx:] = input_ids[start_idx:]
-                                break
-                            break
-                    
-                    if not found:
-                        i += 1
-            else:
-                # Fallback: 使用简单的比例估计（稳定方案）
-                total_len = len(input_ids)
-                
-                # 根据训练模式调整mask比例
-                if self.training_mode == "latent_mas":
-                    # 多轮对话：估计前面有更多输入
-                    mask_ratio = 0.5
-                else:
-                    # 单轮对话：输入较少
-                    mask_ratio = 0.4
-                
-                mask_until = int(total_len * mask_ratio)
-                labels[:mask_until] = -100
+        # 简单稳定的方案：按固定比例mask
+        total_len = len(input_ids)
         
-        except Exception as e:
-            # 最终fallback: 简单稳定的方案
-            total_len = len(input_ids)
+        if self.training_mode == "latent_mas":
+            # 多轮对话：前50%是输入
             mask_until = int(total_len * 0.5)
-            labels[:mask_until] = -100
+        else:
+            # 单轮对话：前30%是输入
+            mask_until = int(total_len * 0.3)
+        
+        labels[:mask_until] = -100
         
         return labels
     

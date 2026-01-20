@@ -81,69 +81,6 @@ def normalize_entity_name(name: str) -> str:
 
 def evaluate_docred(predictions: List[Dict], golds: List[Dict], verbose: bool = False) -> Dict[str, float]:
     """
-    评估DocRED关系抽取结果
-    
-    Args:
-        predictions: 预测结果列表
-        golds: 标准答案列表
-        verbose: 是否输出详细信息
-    
-    Returns:
-        包含P/R/F1等指标的字典
-    """
-    if len(predictions) != len(golds):
-        print(f"[Warning] Length mismatch: {len(predictions)} predictions vs {len(golds)} golds")
-        min_len = min(len(predictions), len(golds))
-        predictions = predictions[:min_len]
-        golds = golds[:min_len]
-    
-    if len(predictions) == 0:
-        return {"precision": 0.0, "recall": 0.0, "f1": 0.0, "total_samples": 0}
-    
-    total_pred = 0
-    total_gold = 0
-    total_correct = 0
-    
-    # Per-relation统计
-    relation_stats = defaultdict(lambda: {"pred": 0, "gold": 0, "correct": 0})
-    
-    parse_errors = 0
-    empty_predictions = 0
-    
-    for idx, (pred_dict, gold_dict) in enumerate(zip(predictions, golds)):
-        try:
-            # 解析预测
-            if isinstance(pred_dict, dict) and "prediction" in pred_dict:
-                pred_text = pred_dict["prediction"]
-            elif isinstance(pred_dict, str):
-                pred_text = pred_dict
-            else:
-                pred_text = str(pred_dict)
-            
-            pred_json = extract_json_from_text(pred_text)
-            pred_relations = pred_json.get("relations", [])
-            
-            if not pred_relations:
-                empty_predictions += 1
-            
-            # 解析标准答案
-            if isinstance(gold_dict, dict) and "gold" in gold_dict:
-                gold_text = gold_dict["gold"]
-            elif isinstance(gold_dict, str):
-                gold_text = gold_dict
-            else:
-                gold_text = str(gold_dict)
-            
-            gold_json = extract_json_from_text(gold_text)
-            gold_relations = gold_json.get("relations", [])
-            
-        except Exception as e:
-            if verbose:
-                print(f"[Error] Sample {idx} parsing failed: {e}")
-            parse_errors += 1
-            continue
-        return {"precision": 0.0, "recall": 0.0, "f1": 0.0, "total_samples": 0}
-    """
     评估 DocRED 关系抽取
     
     Metrics: Precision, Recall, F1 for relation triplets
@@ -152,18 +89,34 @@ def evaluate_docred(predictions: List[Dict], golds: List[Dict], verbose: bool = 
     2. 从模型输出中智能提取JSON
     3. 分别统计每个关系类型的性能
     """
+    if len(predictions) != len(golds):
+        if verbose:
+            print(f"[Warning] Length mismatch: {len(predictions)} predictions vs {len(golds)} golds")
+        min_len = min(len(predictions), len(golds))
+        predictions = predictions[:min_len]
+        golds = golds[:min_len]
+    
+    if len(predictions) == 0:
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0, "total_samples": 0}
+    
     pred_relations = []
     gold_relations = []
     
     # 按关系类型统计
     relation_stats = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
     
-    for pred, gold in zip(predictions, golds):
+    parse_errors = 0
+    empty_predictions = 0
+    
+    for idx, (pred, gold) in enumerate(zip(predictions, golds)):
         # 解析预测结果
         try:
-            pred_text = pred.get("prediction", "")
+            pred_text = pred.get("prediction", "") if isinstance(pred, dict) else str(pred)
             pred_data = extract_json_from_text(pred_text)
             pred_rels = pred_data.get("relations", [])
+            
+            if not pred_rels:
+                empty_predictions += 1
             
             for r in pred_rels:
                 head = normalize_entity_name(r.get("head", ""))
@@ -172,7 +125,9 @@ def evaluate_docred(predictions: List[Dict], golds: List[Dict], verbose: bool = 
                 if head and tail and rel:
                     pred_relations.append((head, rel, tail))
         except Exception as e:
-            pass
+            if verbose:
+                print(f"[Error] Sample {idx} prediction parsing failed: {e}")
+            parse_errors += 1
         
         # 解析金标准
         try:
@@ -187,8 +142,10 @@ def evaluate_docred(predictions: List[Dict], golds: List[Dict], verbose: bool = 
                 if head and tail and rel:
                     gold_relations.append((head, rel, tail))
         except Exception as e:
-            pass
+            if verbose:
+                print(f"[Error] Sample {idx} gold parsing failed: {e}")
     
+    # 转换为集合计算指标
     pred_set = set(pred_relations)
     gold_set = set(gold_relations)
     
@@ -218,6 +175,10 @@ def evaluate_docred(predictions: List[Dict], golds: List[Dict], verbose: bool = 
         r_f1 = 2 * r_prec * r_rec / (r_prec + r_rec) if (r_prec + r_rec) > 0 else 0.0
         per_relation_f1[rel] = {"precision": r_prec, "recall": r_rec, "f1": r_f1}
     
+    if verbose:
+        print(f"\n[Stats] Parse errors: {parse_errors}, Empty predictions: {empty_predictions}")
+        print(f"[Stats] Total pred relations: {len(pred_set)}, Total gold relations: {len(gold_set)}")
+    
     return {
         "precision": precision,
         "recall": recall,
@@ -230,6 +191,8 @@ def evaluate_docred(predictions: List[Dict], golds: List[Dict], verbose: bool = 
         "per_relation": per_relation_f1,
         "unique_relations_predicted": len(set(r[1] for r in pred_set)),
         "unique_relations_gold": len(set(r[1] for r in gold_set)),
+        "parse_errors": parse_errors,
+        "empty_predictions": empty_predictions,
     }
 
 
