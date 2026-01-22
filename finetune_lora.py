@@ -142,11 +142,10 @@ Begin scanning and record findings:"""
 
 Task: Verify relation extraction accuracy.
 
-Document:
-{question}
+The document content and entities are in latent memory (KV Cache).
 
 Instructions:
-- Cross-check entity relationships against document
+- Cross-check entity relationships against document (from latent memory)
 - Verify evidence sentence indices
 - Identify missing or incorrect relations
 - Note corrections in latent format
@@ -156,6 +155,8 @@ Continue verification:"""
         refiner = f"""You are a Document Structuring Agent (Phase 3: Organization).
 
 Task: Organize extracted relations.
+
+All information is in latent memory (KV Cache).
 
 Instructions:
 - Consolidate verified relations
@@ -196,8 +197,10 @@ Begin scanning:"""
 
 Task: Verify form field relationships.
 
+The form content is in latent memory (KV Cache).
+
 Instructions:
-- Cross-check question-answer pairings
+- Cross-check question-answer pairings (from latent memory)
 - Verify field classifications
 - Identify orphaned fields
 - Note corrections in latent format
@@ -242,8 +245,10 @@ Begin scanning:"""
 
 Task: Verify extracted amounts.
 
+The receipt content is in latent memory (KV Cache).
+
 Instructions:
-- Cross-check item prices and totals
+- Cross-check item prices and totals (from latent memory)
 - Verify mathematical consistency
 - Identify missing amounts
 - Note corrections in latent format

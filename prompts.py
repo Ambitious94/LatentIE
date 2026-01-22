@@ -977,6 +977,7 @@ def build_extraction_prompts_sequential(dataset: str, role: str, question: str, 
         output_constraint = "Fill all schema fields with extracted information."
     
     if role == "planner":
+        # Planner: 唯一接收完整文档的Agent
         user_prompt = f"""You are a Document Scanner Agent (Phase 1: Information Discovery).
 
 Task: {task_desc}
@@ -995,17 +996,15 @@ Begin scanning:
 """
     
     elif role == "critic":
+        # Critic: 依赖KV Cache中的文档内容，不重复传递
         user_prompt = f"""You are a Document Validator Agent (Phase 2: Cross-Verification).
 
 Task: {task_desc}
 
-You have latent information from the previous scanning phase.
-
-Document Section {chunk_info}:
-{question}
+The document content and initial scan results are already in latent memory (KV Cache).
 
 Instructions:
-- Cross-check extracted information against document content
+- Cross-check extracted information against the document (from latent memory)
 - Verify accuracy of: {focus_areas}
 - Identify any missing or ambiguous information
 - Resolve inconsistencies
@@ -1015,14 +1014,12 @@ Continue verification:
 """
     
     elif role == "refiner":
+        # Refiner: 完全依赖KV Cache，不需要文档内容
         user_prompt = f"""You are a Document Structuring Agent (Phase 3: Organization).
 
 Task: {task_desc}
 
-You have latent information from previous agents.
-
-Document Section {chunk_info}:
-{question}
+All document content and analysis from previous agents are in latent memory (KV Cache).
 
 Instructions:
 - Organize all extracted information logically
@@ -1035,7 +1032,7 @@ Continue organization:
 """
     
     elif role == "judger":
-        # Get entity list for DocRED
+        # Judger: 最后一步，只需要必要的引用信息（如entity list）
         entity_list = item.get("entity_list", "")
         docred_entity_section = ""
         if dataset == "docred" and entity_list:
@@ -1046,24 +1043,19 @@ Entities (use ONLY these):
         
         user_prompt = f"""Task: {task_desc}
 
-{docred_entity_section}Document:
-{question}
+{docred_entity_section}All document content and previous analysis are in latent memory (KV Cache).
 
 {output_constraint}
 
 Instructions:
-1. First, analyze the document and reason about relationships (write your thinking)
-2. Then output FINAL JSON starting with: {{"relations": [...]}}
+1. Review all latent information from previous agents
+2. Output ONLY the final JSON in this format:
+```json
+{template_str}
+```
 
-Format example:
-{{"relations": [{{"head": "IBM Research – Brazil", "relation": "P749", "tail": "IBM Research", "evidence": [0]}}]}}
-
-Rules:
-- Use entities [0]-[15] only
-- Choose correct P-ID from relation list above
-- evidence: sentence indices from 0
-
-Begin your analysis:
+Do NOT include any explanation or thinking process.
+Output ONLY the JSON block now:
 """
     
     return [
