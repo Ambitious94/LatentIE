@@ -6,7 +6,11 @@ def build_agent_message_sequential_latent_mas(role: str, question: str, context:
     assert method in ["latent_mas"], "this prompt only for latent_mas method"
     assert "qwen" in args.model_name.lower(), "this prompt only for qwen models"
 
+    # Sequential模式的关键：利用KV Cache传递信息
+    # 只有Planner看到完整文档，后续 Agent通过KV Cache获取上文
+    
     if role == "planner":
+        # Planner: 接收完整文档，做初步分析
         user_prompt = f"""You are a Planner Agent. Given an input question, design a clear, step-by-step plan for how to solve the question.
 
 Question: {question}
@@ -16,37 +20,100 @@ Now output your plan to solve the question below:
 """
     
     elif role == "critic":
-        user_prompt = f"""
-Question: {question}
+        # Critic: 不重复文档，直接引用KV Cache中的信息
+        user_prompt = f"""You are a Critic Agent to evaluate the correctness of the previous plan.
+The question and plan information are in latent KV format (already in memory).
 
-You are a Critic Agent to evaluate the correctness of the input plan for the given question and provide helpful feedback for improving the plan.
-The plan information is provided in latent KV representation format. Review the plan and question and output:
-(1) original plan contents
-(2) constructive feedback on the original plan.
+Review and provide:
+(1) What the original plan was
+(2) Constructive feedback to improve it
 
-Format your response as follows:
-Original Plan: [Copy the provided Planner Agent's plan here]
-Feedback: [Your detailed feedback to improve the plan here]
+Format your response as:
+Original Plan: [Summary of the plan]
+Feedback: [Your feedback]
 
-Now, output your response below:
+Now output your response:
 """
     
     elif role == "refiner":
-        user_prompt = f"""
-Question: {question}
+        # Refiner: 依赖KV Cache中的所有前向信息
+        user_prompt = f"""You are a Refiner Agent to provide a refined plan.
+The question, original plan, and feedback are in latent KV format (already in memory).
 
-You are a Refiner Agent to provide a refined step-by-step plan for solving the given question.
-You are provided with:
-(1) latent-format information: a previous plan with feedback
-(2) text-format information: the input question you need to solve.
+Based on all previous information, write a refined and improved plan.
+Make sure your output plan is correct and concise.
 
-Based on the input, write a refined and improved plan to solve the question. Make sure your output plan is correct and concise.
-
-Now, output your refined plan below:
+Now output your refined plan:
 """
     
     elif role == "judger":
-        if args.task in ['gsm8k', 'aime2024', 'aime2025']:
+        if args.task in ['docred']:
+            user_prompt = f"""
+Target Task: Document-level relation extraction
+
+You are provided with latent information (previous agent analysis) and must output the final result.
+
+Entities: {context if context else 'See latent information'}
+
+Common relations: P17(country), P131(located in), P27(citizenship), P569(birth date), P570(death date), P19(birthplace), P20(death place), P69(educated at), P108(employer), P40(child), P26(spouse).
+
+**Output only valid JSON** in this exact format:
+```json
+{{"relations": [{{"head": "Entity", "relation": "P17", "tail": "Country", "evidence": [0]}}]}}
+```
+
+Do not include any explanation, reasoning, or text outside the JSON block.
+Now output the JSON:
+"""
+        
+        elif args.task in ['funsd']:
+            user_prompt = f"""
+Target Task: Form field extraction
+
+You are provided with latent information (previous agent analysis) and must output the final result.
+
+**Output only valid JSON** in this exact format:
+```json
+{{"entities": [{{"text": "...", "label": "question|answer|header|other"}}], "relations": [{{"head": "question text", "tail": "answer text"}}]}}
+```
+
+Do not include any explanation, reasoning, or text outside the JSON block.
+Now output the JSON:
+"""
+        
+        elif args.task in ['cord']:
+            user_prompt = f"""
+Target Task: Receipt information extraction
+
+You are provided with latent information (previous agent analysis) and must output the final result.
+
+**Output only valid JSON** in this exact format:
+```json
+{{"num_items": N, "subtotal_price": "X.XX", "service_price": "", "tax_price": "", "total_price": "X.XX", "etc": ""}}
+```
+
+Do not include any explanation, reasoning, or text outside the JSON block.
+Now output the JSON:
+"""
+        
+        elif args.task in ['finer']:
+            user_prompt = f"""
+Target Task: Financial named entity recognition
+
+You are provided with latent information (previous agent analysis) and must output the final result.
+
+**Output only valid JSON** in this exact format:
+```json
+{{"entities": [{{"text": "Apple", "type": "ORG", "start": 0, "end": 5}}]}}
+```
+
+Entity types: PER, ORG, LOC, MONEY, DATE, PERCENT, STOCK, METRIC, PRODUCT, LAW
+
+Do not include any explanation, reasoning, or text outside the JSON block.
+Now output the JSON:
+"""
+        
+        elif args.task in ['gsm8k', 'aime2024', 'aime2025']:
             user_prompt = f"""
 Target Question: {question}
 

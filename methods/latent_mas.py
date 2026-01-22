@@ -88,63 +88,11 @@ class LatentMASMethod:
         agent_traces: List[List[Dict]] = [[] for _ in range(batch_size)]
         final_texts = ["" for _ in range(batch_size)]
 
-        # 检查是否使用LoRA模型
+        # 注意: LoRA模型现在走完整4-agent流程,保留潜在思维共享
+        # 如果使用--training_mode latent_mas训练,LoRA已经学习了4-agent协作模式
         use_lora = hasattr(self.args, 'lora_weights') and self.args.lora_weights
-        
-        # LoRA模型: 直接推理模式，跳过多agent流程
-        if use_lora and self.args.task in ['docred', 'cord', 'funsd', 'finer']:
-            from prompts import build_lora_extraction_prompt
-            
-            # 直接用LoRA prompt生成结果,不需要planner/critic/refiner/judger流程
-            batch_messages = [
-                build_lora_extraction_prompt(
-                    dataset=self.args.task, 
-                    question=item["question"], 
-                    item=item, 
-                    args=self.args
-                )
-                for item in items
-            ]
-            
-            prompts, input_ids, attention_mask, tokens_batch, extra_inputs = self.model.prepare_chat_batch(
-                batch_messages, add_generation_prompt=True
-            )
-            
-            # 直接生成最终结果
-            if self.model.is_vision_model and extra_inputs:
-                gen_ids = self.model.model.generate(
-                    input_ids=input_ids.to(self.model.device),
-                    attention_mask=attention_mask.to(self.model.device),
-                    max_new_tokens=self.judger_max_new_tokens,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    do_sample=True,
-                    **extra_inputs
-                )
-            else:
-                gen_ids = self.model.model.generate(
-                    input_ids=input_ids.to(self.model.device),
-                    attention_mask=attention_mask.to(self.model.device),
-                    max_new_tokens=self.judger_max_new_tokens,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    do_sample=True,
-                )
-            
-            new_ids = gen_ids[:, input_ids.shape[1]:]
-            generated_texts = self.model.tokenizer.batch_decode(new_ids, skip_special_tokens=True)
-            
-            results = []
-            for idx, item in enumerate(items):
-                raw_text = generated_texts[idx] if idx < len(generated_texts) else ""
-                results.append({
-                    "question": item["question"],
-                    "gold": item.get("gold", ""),
-                    "prediction": raw_text,
-                    "trace": [{"role": "lora_direct", "output": raw_text}],
-                    "method": "lora_direct",
-                })
-            return results
+        if use_lora:
+            print(f"[LoRA] Using LoRA weights with full 4-agent latent flow")
 
         for agent in self.agents:
 
@@ -324,6 +272,13 @@ class LatentMASMethod:
                 print(f'error_msg: {error_msg}')
                 # print(f'=========================================')
 
+            # 文档抽取任务：直接返回JSON字符串，不做额外处理
+            if self.task in ['docred', 'cord', 'funsd', 'finer']:
+                pred = final_text.strip()  # 直接使用原始JSON字符串
+                gold = item.get("gold", "")
+                ok = None  # 评估阶段再计算
+                error_msg = None
+            
             elif self.task in ["aime2024", "aime2025"]:
                 pred = normalize_answer(extract_gsm8k_answer(final_text))
                 gold = str(item.get("gold", "")).strip()
