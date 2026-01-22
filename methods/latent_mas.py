@@ -49,6 +49,33 @@ class LatentMASMethod:
             max_tokens=args.max_new_tokens,
         )
         self.task = args.task
+    
+    def _extract_json_prediction(self, text: str) -> str:
+        """Helper to robustly extract JSON from text with markdown code blocks."""
+        import re
+        
+        # 方法1: 尝试匹配 markdown json 代码块
+        pattern = r"```json\s*({.*?})\s*```"
+        matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+        if matches:
+            return matches[-1].strip()
+        
+        # 方法2: 尝试匹配通用代码块 (```...```)
+        pattern_generic = r"```\s*({.*?})\s*```"
+        matches_generic = re.findall(pattern_generic, text, re.DOTALL | re.IGNORECASE)
+        if matches_generic:
+            candidate = matches_generic[-1].strip()
+            if candidate.startswith("{"):
+                return candidate
+        
+        # 方法3: 寻找最外层的 {}
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return text[start:end+1]
+        
+        # 兜底: 返回原始文本
+        return text.strip()
 
     @staticmethod
     def _slice_tensor(tensor: torch.Tensor, tokens_to_keep: int) -> torch.Tensor:
@@ -272,9 +299,9 @@ class LatentMASMethod:
                 print(f'error_msg: {error_msg}')
                 # print(f'=========================================')
 
-            # 文档抽取任务：直接返回JSON字符串，不做额外处理
+            # 文档抽取任务：使用正则提取JSON，去除markdown标记
             if self.task in ['docred', 'cord', 'funsd', 'finer']:
-                pred = final_text.strip()  # 直接使用原始JSON字符串
+                pred = self._extract_json_prediction(final_text)
                 gold = item.get("gold", "")
                 ok = None  # 评估阶段再计算
                 error_msg = None
