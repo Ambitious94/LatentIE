@@ -10,8 +10,79 @@ def build_agent_message_sequential_latent_mas(role: str, question: str, context:
     # 只有Planner看到完整文档，后续 Agent通过KV Cache获取上文
     
     if role == "planner":
-        # Planner: 接收完整文档，做初步分析
-        user_prompt = f"""You are a Planner Agent. Given an input question, design a clear, step-by-step plan for how to solve the question.
+        # Planner: 接收完整文档，做初步分析（与训练prompt对齐）
+        if args.task == "docred":
+            user_prompt = f"""You are a Document Scanner Agent (Phase 1: Information Discovery).
+
+Task: Document-level relation extraction.
+
+Document:
+{question}
+
+Entities in document:
+{context}
+
+Instructions:
+- Carefully scan and identify all entity mentions
+- Note potential relationships between entities
+- Consider sentence indices as evidence
+- Store findings in latent format
+
+Begin scanning and record findings:"""
+        
+        elif args.task == "funsd":
+            user_prompt = f"""You are a Form Scanner Agent (Phase 1: Field Detection).
+
+Task: Form understanding and field extraction.
+
+Form content:
+{question}
+
+Instructions:
+- Identify all form fields and their types
+- Classify as: question/answer/header/other
+- Note spatial relationships
+- Store findings in latent format
+
+Begin scanning:"""
+        
+        elif args.task == "cord":
+            user_prompt = f"""You are a Receipt Scanner Agent (Phase 1: Item Detection).
+
+Task: Receipt information extraction.
+
+Receipt content:
+{question}
+
+Instructions:
+- Identify all line items and prices
+- Locate subtotal, tax, service charges
+- Find total amount
+- Store findings in latent format
+
+Begin scanning:"""
+        
+        elif args.task == "finer":
+            user_prompt = f"""You are a Financial Text Scanner (Phase 1: Entity Detection).
+
+Task: Named entity recognition in financial domain.
+
+Text:
+{question}
+
+Entity types: PER, ORG, LOC, MONEY, DATE, PERCENT, STOCK, METRIC, PRODUCT, LAW
+
+Instructions:
+- Identify all entities with exact spans
+- Note character positions (start, end)
+- Classify entity types
+- Store findings in latent format
+
+Begin scanning:"""
+        
+        else:
+            # Fallback for other tasks
+            user_prompt = f"""You are a Planner Agent. Given an input question, design a clear, step-by-step plan for how to solve the question.
 
 Question: {question}
 
@@ -20,8 +91,70 @@ Now output your plan to solve the question below:
 """
     
     elif role == "critic":
-        # Critic: 不重复文档，直接引用KV Cache中的信息
-        user_prompt = f"""You are a Critic Agent to evaluate the correctness of the previous plan.
+        # Critic: 不重复文档，直接引用KV Cache中的信息（与训练prompt对齐）
+        if args.task == "docred":
+            user_prompt = f"""You are a Document Validator Agent (Phase 2: Cross-Verification).
+
+Task: Verify relation extraction accuracy.
+
+The document content and entities are in latent memory (KV Cache).
+
+Instructions:
+- Cross-check entity relationships against document (from latent memory)
+- Verify evidence sentence indices
+- Identify missing or incorrect relations
+- Note corrections in latent format
+
+Continue verification:"""
+        
+        elif args.task == "funsd":
+            user_prompt = f"""You are a Form Validator Agent (Phase 2: Link Verification).
+
+Task: Verify form field relationships.
+
+The form content is in latent memory (KV Cache).
+
+Instructions:
+- Cross-check question-answer pairings (from latent memory)
+- Verify field classifications
+- Identify orphaned fields
+- Note corrections in latent format
+
+Continue verification:"""
+        
+        elif args.task == "cord":
+            user_prompt = f"""You are a Receipt Validator Agent (Phase 2: Amount Verification).
+
+Task: Verify receipt calculations.
+
+The receipt content is in latent memory (KV Cache).
+
+Instructions:
+- Verify arithmetic (subtotal + tax + service = total)
+- Check for missing line items
+- Validate price formats
+- Note corrections in latent format
+
+Continue verification:"""
+        
+        elif args.task == "finer":
+            user_prompt = f"""You are a Financial Entity Validator (Phase 2: Type Verification).
+
+Task: Verify entity classifications.
+
+The text and detected entities are in latent memory (KV Cache).
+
+Instructions:
+- Verify entity type assignments
+- Check span boundaries
+- Identify overlapping or nested entities
+- Note corrections in latent format
+
+Continue verification:"""
+        
+        else:
+            # Fallback for other tasks
+            user_prompt = f"""You are a Critic Agent to evaluate the correctness of the previous plan.
 The question and plan information are in latent KV format (already in memory).
 
 Review and provide:
@@ -36,8 +169,70 @@ Now output your response:
 """
     
     elif role == "refiner":
-        # Refiner: 依赖KV Cache中的所有前向信息
-        user_prompt = f"""You are a Refiner Agent to provide a refined plan.
+        # Refiner: 依赖KV Cache中的所有前向信息（与训练prompt对齐）
+        if args.task == "docred":
+            user_prompt = f"""You are a Document Structuring Agent (Phase 3: Organization).
+
+Task: Organize extracted relations.
+
+All information is in latent memory (KV Cache).
+
+Instructions:
+- Consolidate verified relations
+- Resolve any conflicts
+- Prepare final extraction structure
+- Use Wikidata P-IDs for relations
+
+Continue organization:"""
+        
+        elif args.task == "funsd":
+            user_prompt = f"""You are a Form Structuring Agent (Phase 3: Relationship Mapping).
+
+Task: Structure form field relationships.
+
+All information is in latent memory (KV Cache).
+
+Instructions:
+- Map question-answer pairs
+- Structure entity list
+- Prepare final extraction format
+- Include spatial layout hints
+
+Continue organization:"""
+        
+        elif args.task == "cord":
+            user_prompt = f"""You are a Receipt Structuring Agent (Phase 3: Total Calculation).
+
+Task: Structure final receipt data.
+
+All information is in latent memory (KV Cache).
+
+Instructions:
+- Compile item count and prices
+- Calculate or verify totals
+- Structure in output format
+- Include all price components
+
+Continue organization:"""
+        
+        elif args.task == "finer":
+            user_prompt = f"""You are a Financial Entity Structuring Agent (Phase 3: Position Mapping).
+
+Task: Structure entity extraction results.
+
+All information is in latent memory (KV Cache).
+
+Instructions:
+- Compile entity list with positions
+- Resolve overlapping spans
+- Format in output structure
+- Include entity types and boundaries
+
+Continue organization:"""
+        
+        else:
+            # Fallback for other tasks
+            user_prompt = f"""You are a Refiner Agent to provide a refined plan.
 The question, original plan, and feedback are in latent KV format (already in memory).
 
 Based on all previous information, write a refined and improved plan.
@@ -47,71 +242,42 @@ Now output your refined plan:
 """
     
     elif role == "judger":
-        if args.task in ['docred']:
-            user_prompt = f"""
-Target Task: Document-level relation extraction
+        # Judger: 输出最终JSON（与训练prompt对齐）
+        if args.task == "docred":
+            user_prompt = f"""Task: Output final relation extraction JSON.
 
-You are provided with latent information (previous agent analysis) and must output the final result.
-
-Entities: {context if context else 'See latent information'}
+Entities: {context}
 
 Common relations: P17(country), P131(located in), P27(citizenship), P569(birth date), P570(death date), P19(birthplace), P20(death place), P69(educated at), P108(employer), P40(child), P26(spouse).
 
-**Output only valid JSON** in this exact format:
-```json
+Output JSON format:
 {{"relations": [{{"head": "Entity", "relation": "P17", "tail": "Country", "evidence": [0]}}]}}
-```
 
-Do not include any explanation, reasoning, or text outside the JSON block.
-Now output the JSON:
-"""
+Based on previous analysis, output ONLY the final JSON:"""
         
-        elif args.task in ['funsd']:
-            user_prompt = f"""
-Target Task: Form field extraction
+        elif args.task == "funsd":
+            user_prompt = f"""Task: Output final form extraction JSON.
 
-You are provided with latent information (previous agent analysis) and must output the final result.
-
-**Output only valid JSON** in this exact format:
-```json
+Format:
 {{"entities": [{{"text": "...", "label": "question|answer|header|other"}}], "relations": [{{"head": "question text", "tail": "answer text"}}]}}
-```
 
-Do not include any explanation, reasoning, or text outside the JSON block.
-Now output the JSON:
-"""
+Based on previous analysis, output ONLY the final JSON:"""
         
-        elif args.task in ['cord']:
-            user_prompt = f"""
-Target Task: Receipt information extraction
+        elif args.task == "cord":
+            user_prompt = f"""Task: Output final receipt extraction JSON.
 
-You are provided with latent information (previous agent analysis) and must output the final result.
-
-**Output only valid JSON** in this exact format:
-```json
+Format:
 {{"num_items": N, "subtotal_price": "X.XX", "service_price": "", "tax_price": "", "total_price": "X.XX", "etc": ""}}
-```
 
-Do not include any explanation, reasoning, or text outside the JSON block.
-Now output the JSON:
-"""
+Based on previous analysis, output ONLY the final JSON:"""
         
-        elif args.task in ['finer']:
-            user_prompt = f"""
-Target Task: Financial named entity recognition
+        elif args.task == "finer":
+            user_prompt = f"""Task: Output final entity extraction JSON.
 
-You are provided with latent information (previous agent analysis) and must output the final result.
-
-**Output only valid JSON** in this exact format:
-```json
+Format:
 {{"entities": [{{"text": "Apple", "type": "ORG", "start": 0, "end": 5}}]}}
-```
 
-Entity types: PER, ORG, LOC, MONEY, DATE, PERCENT, STOCK, METRIC, PRODUCT, LAW
-
-Do not include any explanation, reasoning, or text outside the JSON block.
-Now output the JSON:
-"""
+Based on previous analysis, output ONLY the final JSON:"""
         
         elif args.task in ['gsm8k', 'aime2024', 'aime2025']:
             user_prompt = f"""
@@ -937,126 +1103,240 @@ DOCRED_RELATIONS_FULL = """ALL VALID RELATIONS (use these IDs):
 def build_extraction_prompts_sequential(dataset: str, role: str, question: str, item: dict, method=None, args=None):
     """
     Unified extraction prompts for DocRED/CORD/FUNSD/FinER datasets (Sequential mode).
+    完全对齐finetune_lora.py中的训练prompt格式！
     """
     import json
     
-    system_message = "You are Qwen, created by Alibaba Cloud. You are a document information extraction specialist. When asked to extract, output ONLY valid JSON without any thinking process or explanatory text."
+    # System message与训练时一致
+    system_message = "You are Qwen, an expert document extraction assistant. Follow the multi-agent pipeline: scan → verify → organize → output."
     
     assert method in ["latent_mas"], "this prompt only for latent_mas method"
     assert "qwen" in args.model_name.lower(), "this prompt only for qwen models"
     
-    template = json.loads(item.get("extract_template", "{}"))
-    template_str = json.dumps(template, ensure_ascii=False, indent=2)
-    chunk_info = item.get("chunk_info", "")
+    entity_list = item.get("entity_list", "")
     
-    # Dataset-specific instructions
+    # Dataset-specific prompts完全匹配训练格式
     if dataset == "docred":
-        task_desc = "document-level relation extraction using Wikidata property IDs."
-        focus_areas = "named entities (persons, organizations, locations, dates, etc.) and their relationships"
+        if role == "planner":
+            user_prompt = f"""You are a Document Scanner Agent (Phase 1: Information Discovery).
+
+Task: Document-level relation extraction.
+
+Document:
+{question}
+
+Entities in document:
+{entity_list}
+
+Instructions:
+- Carefully scan and identify all entity mentions
+- Note potential relationships between entities
+- Consider sentence indices as evidence
+- Store findings in latent format
+
+Begin scanning and record findings:"""
         
-        output_constraint = DOCRED_RELATIONS_FULL
-    
-    elif dataset == "cord":
-        task_desc = "receipt/invoice information extraction. Extract structured purchase information."
-        focus_areas = "menu items (names, prices, counts), subtotal, total amount, tax, payment details"
-        output_constraint = "Fill the 'menu' array with all items, and populate subtotal/total/tax fields with exact numeric values."
+        elif role == "critic":
+            user_prompt = f"""You are a Document Validator Agent (Phase 2: Cross-Verification).
+
+Task: Verify relation extraction accuracy.
+
+The document content and entities are in latent memory (KV Cache).
+
+Instructions:
+- Cross-check entity relationships against document (from latent memory)
+- Verify evidence sentence indices
+- Identify missing or incorrect relations
+- Note corrections in latent format
+
+Continue verification:"""
+        
+        elif role == "refiner":
+            user_prompt = f"""You are a Document Structuring Agent (Phase 3: Organization).
+
+Task: Organize extracted relations.
+
+All information is in latent memory (KV Cache).
+
+Instructions:
+- Consolidate verified relations
+- Resolve any conflicts
+- Prepare final extraction structure
+- Use Wikidata P-IDs for relations
+
+Continue organization:"""
+        
+        elif role == "judger":
+            user_prompt = f"""Task: Output final relation extraction JSON.
+
+Entities: {entity_list}
+
+Common relations: P17(country), P131(located in), P27(citizenship), P569(birth date), P570(death date), P19(birthplace), P20(death place), P69(educated at), P108(employer), P40(child), P26(spouse).
+
+Output JSON format:
+{{"relations": [{{"head": "Entity", "relation": "P17", "tail": "Country", "evidence": [0]}}]}}
+
+Based on previous analysis, output ONLY the final JSON:"""
     
     elif dataset == "funsd":
-        task_desc = "form understanding and key-value extraction. Extract form fields and their relationships."
-        focus_areas = "form entities (questions, answers, headers, other text), spatial relationships between fields"
-        output_constraint = "Fill 'entities' array with all text elements and their labels, 'relations' array with question-answer pairs."
-    
-    elif dataset == "finer":
-        task_desc = "fine-grained financial entity recognition. Identify and classify financial domain entities."
-        focus_areas = "financial terms (stock codes, rates, accounting items, metrics, dates, amounts, company names)"
-        output_constraint = "Fill 'entities' array with all financial entities, their types, and positions in text."
-    
-    else:
-        task_desc = "document information extraction."
-        focus_areas = "key information elements in the document"
-        output_constraint = "Fill all schema fields with extracted information."
-    
-    if role == "planner":
-        # Planner: 唯一接收完整文档的Agent
-        user_prompt = f"""You are a Document Scanner Agent (Phase 1: Information Discovery).
+        if role == "planner":
+            user_prompt = f"""You are a Form Scanner Agent (Phase 1: Field Detection).
 
-Task: {task_desc}
+Task: Form understanding and field extraction.
 
-Document Section {chunk_info}:
+Form content:
 {question}
 
 Instructions:
-- Carefully read the document section
-- Identify ALL relevant information: {focus_areas}
-- Note context and relationships between information elements
-- Store findings in latent format (do NOT output final JSON yet)
-- Be thorough and precise
+- Identify all form fields and their types
+- Classify as: question/answer/header/other
+- Note spatial relationships
+- Store findings in latent format
 
-Begin scanning:
-"""
-    
-    elif role == "critic":
-        # Critic: 依赖KV Cache中的文档内容，不重复传递
-        user_prompt = f"""You are a Document Validator Agent (Phase 2: Cross-Verification).
-
-Task: {task_desc}
-
-The document content and initial scan results are already in latent memory (KV Cache).
-
-Instructions:
-- Cross-check extracted information against the document (from latent memory)
-- Verify accuracy of: {focus_areas}
-- Identify any missing or ambiguous information
-- Resolve inconsistencies
-- Refine latent representation (do NOT output final JSON yet)
-
-Continue verification:
-"""
-    
-    elif role == "refiner":
-        # Refiner: 完全依赖KV Cache，不需要文档内容
-        user_prompt = f"""You are a Document Structuring Agent (Phase 3: Organization).
-
-Task: {task_desc}
-
-All document content and analysis from previous agents are in latent memory (KV Cache).
-
-Instructions:
-- Organize all extracted information logically
-- Resolve any conflicts between different document sections
-- Prepare comprehensive latent summary
-- Focus on: {focus_areas}
-- Refine latent representation (do NOT output final JSON yet)
-
-Continue organization:
-"""
-    
-    elif role == "judger":
-        # Judger: 最后一步，只需要必要的引用信息（如entity list）
-        entity_list = item.get("entity_list", "")
-        docred_entity_section = ""
-        if dataset == "docred" and entity_list:
-            docred_entity_section = f"""
-Entities (use ONLY these):
-{entity_list}
-"""
+Begin scanning:"""
         
-        user_prompt = f"""Task: {task_desc}
+        elif role == "critic":
+            user_prompt = f"""You are a Form Validator Agent (Phase 2: Link Verification).
 
-{docred_entity_section}All document content and previous analysis are in latent memory (KV Cache).
+Task: Verify form field relationships.
 
-{output_constraint}
+The form content is in latent memory (KV Cache).
 
 Instructions:
-1. Review all latent information from previous agents
-2. Output ONLY the final JSON in this format:
-```json
-{template_str}
-```
+- Cross-check question-answer pairings (from latent memory)
+- Verify field classifications
+- Identify orphaned fields
+- Note corrections in latent format
 
-Do NOT include any explanation or thinking process.
-Output ONLY the JSON block now:
-"""
+Continue verification:"""
+        
+        elif role == "refiner":
+            user_prompt = f"""You are a Form Structuring Agent (Phase 3: Relationship Mapping).
+
+Task: Finalize form structure.
+
+Instructions:
+- Consolidate question-answer pairs
+- Confirm all field labels
+- Prepare final linking structure
+
+Continue organization:"""
+        
+        elif role == "judger":
+            user_prompt = f"""Task: Output final form extraction JSON.
+
+Format:
+{{"entities": [{{"text": "...", "label": "question|answer|header|other"}}], "relations": [{{"head": "question text", "tail": "answer text"}}]}}
+
+Based on previous analysis, output ONLY the final JSON:"""
+    
+    elif dataset == "cord":
+        if role == "planner":
+            user_prompt = f"""You are a Receipt Scanner Agent (Phase 1: Item Detection).
+
+Task: Receipt/invoice information extraction.
+
+Receipt content:
+{question}
+
+Instructions:
+- Identify all menu items with prices
+- Note subtotal, tax, service charges
+- Locate total amount
+- Store findings in latent format
+
+Begin scanning:"""
+        
+        elif role == "critic":
+            user_prompt = f"""You are a Receipt Validator Agent (Phase 2: Amount Verification).
+
+Task: Verify extracted amounts.
+
+The receipt content is in latent memory (KV Cache).
+
+Instructions:
+- Cross-check item prices and totals (from latent memory)
+- Verify mathematical consistency
+- Identify missing amounts
+- Note corrections in latent format
+
+Continue verification:"""
+        
+        elif role == "refiner":
+            user_prompt = f"""You are a Receipt Structuring Agent (Phase 3: Total Calculation).
+
+Task: Finalize receipt structure.
+
+Instructions:
+- Consolidate all items and amounts
+- Confirm total calculations
+- Prepare final structure
+
+Continue organization:"""
+        
+        elif role == "judger":
+            user_prompt = f"""Task: Output final receipt extraction JSON.
+
+Format:
+{{"num_items": N, "subtotal_price": "X.XX", "service_price": "", "tax_price": "", "total_price": "X.XX", "etc": ""}}
+
+Based on previous analysis, output ONLY the final JSON:"""
+    
+    elif dataset == "finer":
+        if role == "planner":
+            user_prompt = f"""You are a Financial Entity Scanner (Phase 1: Entity Detection).
+
+Task: Financial named entity recognition.
+
+Text:
+{question}
+
+Entity types: PER, ORG, LOC, MONEY, DATE, PERCENT, STOCK, METRIC, PRODUCT, LAW
+
+Instructions:
+- Identify all financial entities
+- Note entity boundaries (start/end positions)
+- Classify entity types
+- Store findings in latent format
+
+Begin scanning:"""
+        
+        elif role == "critic":
+            user_prompt = f"""You are a Financial Entity Validator (Phase 2: Type Verification).
+
+Task: Verify entity classifications.
+
+Instructions:
+- Cross-check entity type assignments
+- Verify character positions
+- Identify overlapping or missing entities
+- Note corrections in latent format
+
+Continue verification:"""
+        
+        elif role == "refiner":
+            user_prompt = f"""You are a Financial Entity Structuring Agent (Phase 3: Position Mapping).
+
+Task: Finalize entity boundaries.
+
+Instructions:
+- Consolidate entity spans
+- Confirm type classifications
+- Calculate exact positions
+
+Continue organization:"""
+        
+        elif role == "judger":
+            user_prompt = f"""Task: Output final entity extraction JSON.
+
+Format:
+{{"entities": [{{"text": "Apple", "type": "ORG", "start": 0, "end": 5}}]}}
+
+Based on previous analysis, output ONLY the final JSON:"""
+    
+    else:
+        # Fallback for unknown datasets
+        user_prompt = f"Process {dataset} task for {role} agent."
     
     return [
         {"role": "system", "content": system_message},
