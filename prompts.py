@@ -1171,7 +1171,7 @@ Continue organization:"""
 
 Entities: {entity_list}
 
-Common relations: P17(country), P131(located in), P27(citizenship), P569(birth date), P570(death date), P19(birthplace), P20(death place), P69(educated at), P108(employer), P40(child), P26(spouse).
+{DOCRED_RELATIONS_FULL}
 
 Output JSON format:
 {{"relations": [{{"head": "Entity", "relation": "P17", "tail": "Country", "evidence": [0]}}]}}
