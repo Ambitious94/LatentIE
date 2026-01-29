@@ -597,7 +597,20 @@ def load_funsd(
             if not full_text:
                 # Get annotations for this image
                 img_anns = [a for a in data["annotations"] if a.get("image_id") == image_id]
-                full_text = f"[Form image: {file_name}]"
+                
+                # Extract text from annotations
+                texts = []
+                for ann in img_anns:
+                    # COCO annotations may have caption/text field
+                    text_content = ann.get("caption", ann.get("text", ""))
+                    if text_content:
+                        texts.append(text_content)
+                
+                if texts:
+                    full_text = " ".join(texts)
+                else:
+                    full_text = f"[Form image: {file_name}]"
+                
                 gold = {"entities": [], "annotations_count": len(img_anns)}
             
             if not full_text and image_obj:
