@@ -548,6 +548,17 @@ def load_funsd(
             segm_file = img_info.get("segm_file", "")
             image_id = img_info.get("id")
             
+            # Auto-infer segm_file if not provided
+            if not segm_file and ann_dir:
+                # Try: 82092117.png -> 82092117.json
+                base_name = os.path.splitext(file_name)[0]
+                # Remove suffix like _0338
+                base_name = base_name.split('_')[0]
+                potential_segm = f"{base_name}.json"
+                if os.path.exists(os.path.join(ann_dir, potential_segm)):
+                    segm_file = potential_segm
+                    print(f"[Info] Auto-inferred segm_file: {segm_file} for image {file_name}")
+            
             # Load image
             image_obj = None
             if img_dir:
